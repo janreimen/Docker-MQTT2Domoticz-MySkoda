@@ -6,6 +6,7 @@ from myskoda import MySkoda
 from config import load_config
 from vehicles import load_vehicles,mask_vin
 from domoticz_client import DomoticzClient
+from provisioner import provision
 from skoda_bridge import SkodaBridge
 VERSION='0.1.0'
 async def update_vehicle(d,m,s,gps):

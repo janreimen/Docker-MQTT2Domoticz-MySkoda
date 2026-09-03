@@ -1,30 +1,31 @@
 # Docker-MQTT2Domoticz-MySkoda
 
-**MyŠkoda API → MQTT → Domoticz bridge**
+**MyŠkoda API → Domoticz bridge**
 
-Version **0.1.0**
+**Version: 0.1.1**
 
-A lightweight Docker-based bridge that connects the unofficial Python [`myskoda`](https://github.com/skodaconnect/myskoda) library to Domoticz.
+A lightweight Docker-based bridge that connects the MyŠkoda service to Domoticz.
 
-The application authenticates against MyŠkoda, retrieves vehicle information, and publishes the values to Domoticz devices. It is designed to run independently from the Domoticz installation and communicates with Domoticz through its HTTP/JSON API.
+The application authenticates against MyŠkoda, retrieves vehicle information, optionally executes supported vehicle commands, and publishes the resulting values to Domoticz.
+
+Version **0.1.1** introduces **automatic Domoticz device provisioning**, eliminating the need to manually configure Domoticz IDX values.
+
+> **Important:** This is an independent community project and is not affiliated with or endorsed by Škoda Auto or Volkswagen Group.
+
+---
 
 ## Features
 
 * Supports multiple Škoda vehicles.
-* Uses the MyŠkoda account for authentication.
-* Polls vehicle information periodically.
-* Publishes vehicle status to Domoticz.
-* Supports:
-
-  * Lock status
-  * Lights status
-  * Doors status
-  * Windows status
-  * Climatisation status
-  * Driving range
-  * Mileage
-  * Inspection due information
-  * Vehicle position
+* Uses a single authenticated MyŠkoda session for all configured vehicles.
+* Periodically retrieves vehicle information.
+* Automatic Domoticz hardware provisioning.
+* Automatic Domoticz device provisioning.
+* Automatic discovery and persistence of Domoticz IDX values.
+* Automatically creates missing devices for newly configured vehicles.
+* Distance values are represented as **Domoticz Custom Counters**.
+* Optional GPS position retrieval.
+* Optional local MQTT output.
 * Optional vehicle controls:
 
   * Lock
@@ -32,60 +33,71 @@ The application authenticates against MyŠkoda, retrieves vehicle information, a
   * Wakeup
   * Honk / flash
   * Start/stop climatisation
-  * Window heating
-* Optional GPS position retrieval.
-* Optional local MQTT output.
-* Runs in Docker.
-* Configuration is kept outside the container through environment variables and a vehicle CSV file.
+  * Start/stop window heating
+* Runs entirely in Docker.
+* Persistent application state.
+
+---
 
 ## Architecture
 
 ```text
-                  ┌─────────────────────┐
-                  │      Škoda Cloud    │
-                  │      MyŠkoda API    │
-                  └──────────┬──────────┘
+                         Škoda Cloud
                              │
-                             │ myskoda
+                             │ MyŠkoda
                              ▼
-                  ┌─────────────────────┐
-                  │ Docker Container    │
-                  │                     │
-                  │ MyŠkoda → Domoticz  │
-                  └──────────┬──────────┘
-                             │
-                   HTTP / JSON API
-                             │
-                             ▼
-                  ┌─────────────────────┐
-                  │     Domoticz        │
-                  │                     │
-                  │ Virtual Devices     │
-                  └─────────────────────┘
+                  ┌──────────────────────┐
+                  │  Docker Container    │
+                  │                      │
+                  │  MyŠkoda API         │
+                  │        │             │
+                  │        ▼             │
+                  │  Domoticz Client     │
+                  │        │             │
+                  │        ▼             │
+                  │  Provisioner         │
+                  └────────┬─────────────┘
+                           │
+                       HTTP / JSON
+                           │
+                           ▼
+                  ┌──────────────────────┐
+                  │      Domoticz        │
+                  │                      │
+                  │  MySkoda Hardware    │
+                  │  Vehicle Devices     │
+                  └──────────────────────┘
 
                        Optional
                            │
                            ▼
-                  ┌─────────────────────┐
-                  │ Local MQTT Broker   │
-                  │     skoda/out       │
-                  └─────────────────────┘
+                  ┌──────────────────────┐
+                  │    Local MQTT        │
+                  │    skoda/out         │
+                  └──────────────────────┘
 ```
 
-## Requirements
+---
+
+# Requirements
 
 * Docker
 * Docker Compose
-* A running Domoticz installation with HTTP API access
+* A running Domoticz installation
+* Domoticz HTTP/JSON API access
 * A MyŠkoda account
-* One or more Škoda vehicles associated with that account
-* Network connectivity from the Docker host to:
+* One or more vehicles associated with the account
+* Network connectivity to the required services
 
-  * Škoda services
-  * Domoticz
-  * MQTT broker, if MQTT output is enabled
+The Docker container requires network access to:
 
-## Installation
+* MyŠkoda services
+* Domoticz
+* MQTT broker, if MQTT output is enabled
+
+---
+
+# Installation
 
 Clone the repository:
 
@@ -100,7 +112,7 @@ Create the environment file:
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit the configuration:
 
 ```bash
 nano .env
@@ -112,14 +124,22 @@ At minimum configure:
 SKODA_USERNAME=your-skoda-account@example.com
 SKODA_PASSWORD=your-password
 
-DOMOTICZ_URL=http://your-domoticz-url:domoticz-httpport
+DOMOTICZ_URL=http://domoticz-host:port
 DOMOTICZ_USER=your-domoticz-user
 DOMOTICZ_PASSWORD=your-domoticz-password
 ```
 
-Do **not** commit `.env` to Git.
+Protect the file:
 
-## Vehicle configuration
+```bash
+chmod 600 .env
+```
+
+**Never commit `.env` to Git.**
+
+---
+
+# Vehicle configuration
 
 Vehicles are configured in:
 
@@ -135,123 +155,130 @@ car_001,YOUR_VIN_1,Octavia RS
 car_002,YOUR_VIN_2,Octavia
 ```
 
-Do not put passwords, API credentials, or other secrets in this file.
+The `vehicle_id` is the internal identifier used by the application.
 
-The VIN is used to identify the vehicle in the MyŠkoda API.
+The `vin` identifies the vehicle in MyŠkoda.
 
-## Docker Compose
+The `name` is used when creating the Domoticz devices.
 
-The recommended deployment uses host networking:
+Do not place passwords, tokens, PINs, or other credentials in this file.
 
-```yaml
-services:
-  domoticz-myskoda:
-    build: .
-    container_name: domoticz-myskoda
-    restart: unless-stopped
-    network_mode: host
-    env_file:
-      - .env
-    volumes:
-      - ./config/vehicles.csv:/app/config/vehicles.csv:ro
-      - ./state:/app/state
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-```
+---
 
-Build and start:
+# Automatic Domoticz provisioning
 
-```bash
-docker compose build
-docker compose up -d
-```
+## Version 0.1.1
 
-Check the container:
+Version 0.1.1 automatically creates and configures the Domoticz hardware and devices required by the bridge.
 
-```bash
-docker compose ps
-```
-
-View logs:
-
-```bash
-docker compose logs -f domoticz-myskoda
-```
-
-## Configuration
-
-The main configuration is provided through environment variables.
-
-### MyŠkoda
+Set:
 
 ```dotenv
-SKODA_USERNAME=
-SKODA_PASSWORD=
-SKODA_SPIN=
+DOMOTICZ_PROVISION=true
+DOMOTICZ_HARDWARE_NAME=MySkoda
 ```
 
-`SKODA_SPIN` is optional and is required only for operations that require the vehicle's security PIN.
+On startup the application:
 
-### Domoticz
+1. Connects to Domoticz.
+2. Finds the configured `MySkoda` hardware.
+3. Creates the hardware if it does not exist.
+4. Checks the configured vehicles.
+5. Finds existing devices by name.
+6. Creates missing devices.
+7. Configures distance-based devices as Custom Counters.
+8. Stores the resulting IDX mappings in `state/devices.json`.
+9. Uses the stored mappings for subsequent polling.
 
-```dotenv
-DOMOTICZ_URL=http://domoticz-url:domoticz-httpport
-DOMOTICZ_USER=
-DOMOTICZ_PASSWORD=
+This means that **manual IDX configuration is no longer required**.
+
+---
+
+# Provisioned devices
+
+For every configured vehicle, the application provisions the following devices:
+
+| Device         | Purpose                      |
+| -------------- | ---------------------------- |
+| Locked         | Vehicle lock status          |
+| Lights         | Exterior lights status       |
+| Doors          | Door status                  |
+| Windows        | Window status                |
+| Climatisation  | Climatisation status/control |
+| Range          | Current driving range        |
+| Mileage        | Current vehicle mileage      |
+| Inspection     | Days until inspection        |
+| Position       | Vehicle GPS position         |
+| Honk / Flash   | Vehicle horn/lights command  |
+| Window Heating | Window heating command       |
+| Wakeup         | Wake-up vehicle command      |
+
+Device names follow the pattern:
+
+```text
+<Vehicle Name> [<vehicle_id>] - <Device>
 ```
 
-The bridge communicates with Domoticz through the Domoticz JSON API.
+Example:
 
-### Polling
-
-```dotenv
-POLL_INTERVAL=1800
+```text
+Octavia RS [car_001] - Locked
+Octavia RS [car_001] - Range
+Octavia RS [car_001] - Mileage
 ```
 
-The value is specified in seconds.
+---
+
+# Distance values
+
+Distance-based values are represented as **Custom Counters**.
+
+This applies to:
+
+* Mileage
+* Driving range
+* Other absolute distance values
+
+The application writes the **current absolute value**.
 
 For example:
 
 ```text
-1800 = 30 minutes
-900  = 15 minutes
-300  = 5 minutes
+Mileage = 42,315 km
+Range   = 287 km
 ```
 
-### GPS
+The bridge does **not** increment these counters.
 
-```dotenv
-GPS_ENABLED=true
+The Domoticz counter configuration uses:
+
+```text
+ValueQuantity = Custom
+ValueUnits    = km
+SwitchType    = Custom Counter
 ```
 
-Set this to `false` if vehicle position information should not be retrieved.
+This is important because vehicle mileage and range represent absolute values rather than incremental consumption.
 
-### Climatisation
+---
 
-```dotenv
-AC_TARGET=21.0
+# Inspection
+
+The inspection value is represented as an absolute Custom Counter.
+
+Example:
+
+```text
+Inspection = 183 days
 ```
 
-This defines the target temperature used when starting climatisation.
+The value represents the current number of days until the next inspection.
 
-### MQTT
+---
 
-Optional local MQTT output:
+# Persistent device state
 
-```dotenv
-MQTT_HOST=ip_of_mqtt_broker
-MQTT_PORT=port_of_broker
-MQTT_TOPIC=skoda/out
-```
-
-## Domoticz devices
-
-Version 0.1.0 uses predefined Domoticz IDX mappings.
-
-The mapping is stored in:
+Provisioned IDX values are stored in:
 
 ```text
 state/devices.json
@@ -278,31 +305,190 @@ Example:
 }
 ```
 
-### Distance values
+The actual IDX values are assigned by Domoticz and may differ from this example.
 
-Distance-based values such as:
+The state directory must therefore be persistent.
 
-* Mileage
-* Driving range
+---
 
-are represented as **Domoticz Custom Counters** containing the current absolute value.
+# Adding another vehicle
 
-They are not intended to be incremented by the bridge.
+Add the vehicle to:
+
+```text
+config/vehicles.csv
+```
 
 For example:
 
-```text
-Mileage: 42,315 km
-Range:      287 km
+```csv
+car_003,YOUR_VIN_3,Enyaq
 ```
 
-The current value is written directly to the corresponding Domoticz device.
+Restart the container:
 
-## Vehicle controls
+```bash
+docker compose restart
+```
 
-The bridge can expose controls for operations supported by the MyŠkoda library.
+The provisioning process will detect the new vehicle and create its missing Domoticz devices.
 
-Depending on vehicle and account capabilities:
+No manual IDX configuration is required.
+
+---
+
+# Docker Compose
+
+Recommended configuration:
+
+```yaml
+services:
+  domoticz-myskoda:
+    build: .
+    container_name: domoticz-myskoda
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./config/vehicles.csv:/app/config/vehicles.csv:ro
+      - ./state:/app/state
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m
+```
+
+Build the container:
+
+```bash
+docker compose build
+```
+
+Start:
+
+```bash
+docker compose up -d
+```
+
+Check:
+
+```bash
+docker compose ps
+```
+
+Logs:
+
+```bash
+docker compose logs -f domoticz-myskoda
+```
+
+---
+
+# Configuration
+
+## MyŠkoda
+
+```dotenv
+SKODA_USERNAME=
+SKODA_PASSWORD=
+SKODA_SPIN=
+```
+
+`SKODA_SPIN` is optional and is only required for operations that need the vehicle security PIN.
+
+---
+
+## Domoticz
+
+```dotenv
+DOMOTICZ_URL=http://host_ip:port
+DOMOTICZ_USER=
+DOMOTICZ_PASSWORD=
+```
+
+The application communicates with Domoticz through its HTTP/JSON API.
+
+---
+
+## Automatic provisioning
+
+```dotenv
+DOMOTICZ_PROVISION=true
+DOMOTICZ_HARDWARE_NAME=MySkoda
+```
+
+Set:
+
+```dotenv
+DOMOTICZ_PROVISION=false
+```
+
+if automatic provisioning should be disabled.
+
+---
+
+## Polling
+
+```dotenv
+POLL_INTERVAL=1800
+```
+
+The value is specified in seconds.
+
+Examples:
+
+```text
+1800 = 30 minutes
+900  = 15 minutes
+300  = 5 minutes
+```
+
+---
+
+## GPS
+
+```dotenv
+GPS_ENABLED=true
+```
+
+Set to:
+
+```dotenv
+GPS_ENABLED=false
+```
+
+if GPS position retrieval is not wanted.
+
+---
+
+## Climatisation
+
+```dotenv
+AC_TARGET=21.0
+```
+
+This is the target temperature used when starting climatisation.
+
+---
+
+## MQTT
+
+Optional local MQTT output:
+
+```dotenv
+MQTT_HOST=ip_broker
+MQTT_PORT=port_broker
+MQTT_TOPIC=skoda/out
+```
+
+---
+
+# Vehicle controls
+
+Depending on vehicle and account capabilities, the bridge can expose:
 
 * Lock
 * Unlock
@@ -313,81 +499,94 @@ Depending on vehicle and account capabilities:
 * Start window heating
 * Stop window heating
 
-Vehicle commands may require the MyŠkoda security PIN.
+Some commands may require `SKODA_SPIN`.
 
-Use these functions carefully. The bridge does not bypass Škoda's authentication or vehicle security mechanisms.
+Vehicle commands should be used carefully.
 
-## State
+The application does not bypass MyŠkoda authentication or vehicle security mechanisms.
 
-Runtime device mappings are stored under:
+---
 
-```text
-state/
-```
+# Upgrading from 0.1.0
 
-The directory is mounted as a Docker volume so that state survives container recreation.
+Version 0.1.1 changes Domoticz device management from manual IDX configuration to automatic provisioning.
 
-Do not delete the state file unless you intentionally want to recreate the device mapping.
-
-## Logs
-
-Follow the application logs:
+Before upgrading, create a backup:
 
 ```bash
-docker compose logs -f
+cp -a state state.backup
 ```
 
-Or:
+Keep the existing Domoticz devices.
+
+Do **not** delete the existing devices simply because `state/devices.json` is being regenerated.
+
+Update the application:
 
 ```bash
-docker logs -f domoticz-myskoda
+git pull
 ```
 
-The Docker logging configuration limits log rotation to avoid uncontrolled disk usage.
-
-## Troubleshooting
-
-### Domoticz connection refused
-
-Verify that Domoticz is reachable:
+Then rebuild:
 
 ```bash
-curl http://domoticz_ip:domoticz_port/json.htm?type=command&param=getversion
+docker compose build
+```
+
+Start:
+
+```bash
+docker compose up -d
+```
+
+Monitor provisioning:
+
+```bash
+docker compose logs -f domoticz-myskoda
+```
+
+The application will discover or create the required devices and save their IDX mappings.
+
+---
+
+# Troubleshooting
+
+## Domoticz connection refused
+
+Test Domoticz:
+
+```bash
+curl "http://domoticz:port/json.htm?type=command&param=getversion"
 ```
 
 Check:
 
-* Domoticz IP address
+* Domoticz address
 * HTTP port
-* Firewall rules
+* Firewall
 * `DOMOTICZ_URL`
 * Docker networking
 
-### Domoticz returns HTTP 401
+---
 
-The configured Domoticz account does not have sufficient permissions for the requested API operation.
+## HTTP 401 from Domoticz
 
-Verify:
+A `401 Unauthorized` response means that the configured Domoticz account does not have sufficient permissions for the requested API operation.
+
+This is especially important for v0.1.1 because provisioning requires additional Domoticz API operations.
+
+Check:
 
 ```dotenv
 DOMOTICZ_USER=
 DOMOTICZ_PASSWORD=
 ```
 
-and check the user's Domoticz permissions.
+and verify the user's permissions in Domoticz.
 
-### MyŠkoda authentication fails
+---
 
-Verify:
-
-```dotenv
-SKODA_USERNAME=
-SKODA_PASSWORD=
-```
-
-Also check whether the MyŠkoda account can log in normally through the official Škoda service.
-
-### Container starts but no vehicle data appears
+## Provisioning does not create devices
 
 Check:
 
@@ -395,35 +594,64 @@ Check:
 docker compose logs -f domoticz-myskoda
 ```
 
-Then verify:
+Verify:
+
+```dotenv
+DOMOTICZ_PROVISION=true
+DOMOTICZ_HARDWARE_NAME=MySkoda
+```
+
+Also verify that the Domoticz user is allowed to perform the required API operations.
+
+---
+
+## MyŠkoda authentication failure
+
+Check:
+
+```dotenv
+SKODA_USERNAME=
+SKODA_PASSWORD=
+```
+
+Verify that the account works with the normal MyŠkoda service.
+
+---
+
+## No vehicle data
+
+Check:
 
 1. MyŠkoda authentication.
 2. `config/vehicles.csv`.
-3. VIN configuration.
+3. VIN.
 4. Domoticz connectivity.
-5. IDX mappings in `state/devices.json`.
+5. `state/devices.json`.
+6. Container logs.
 
-## Development
+---
+
+# Development
 
 The application is written in Python and packaged as a Docker image.
 
-The main components are:
+Source structure:
 
 ```text
 app/
 ├── config.py
 ├── domoticz_client.py
 ├── main.py
-└── ...
+└── provisioner.py
 ```
 
-Dependencies are defined in:
+Dependencies:
 
 ```text
 requirements.txt
 ```
 
-Build locally:
+Build:
 
 ```bash
 docker compose build
@@ -435,37 +663,80 @@ Run:
 docker compose up
 ```
 
-## Version 0.1.0
+---
 
-Version 0.1.0 is the initial Docker release.
+# Version 0.1.1
 
-The device mappings are manually configured through `state/devices.json`.
+### Added
 
-Automatic Domoticz device provisioning is **not yet implemented in 0.1.0**.
-
-## Roadmap
-
-Planned improvements include:
-
+* Automatic Domoticz hardware provisioning.
 * Automatic Domoticz device provisioning.
-* Automatic IDX discovery and persistence.
-* Easier addition of vehicles.
-* Improved Domoticz device naming.
+* Automatic IDX discovery.
+* Persistent IDX mapping.
+* Automatic provisioning for newly configured vehicles.
+* Automatic Custom Counter configuration.
+* Configurable provisioning settings.
+
+### Changed
+
+* Manual IDX configuration is no longer required.
+* `state/devices.json` is generated and maintained by the application.
+* Distance values are explicitly handled as absolute Custom Counters.
+
+### Retained from 0.1.0
+
+* MyŠkoda authentication.
+* Multi-vehicle support.
+* Vehicle status retrieval.
+* Vehicle controls.
+* Optional GPS.
+* Optional MQTT.
+* Docker deployment.
+
+---
+
+# Version 0.1.0
+
+The initial release provided:
+
+* Docker deployment.
+* MyŠkoda integration.
+* Multi-vehicle configuration.
+* Domoticz integration.
+* Manual IDX mapping.
+* Vehicle status.
+* Vehicle controls.
+* Optional MQTT.
+* Optional GPS.
+
+---
+
+# Roadmap
+
+Potential future improvements:
+
+* Improved provisioning compatibility across Domoticz versions.
 * More vehicle telemetry.
-* Better error handling and retry logic.
-* Improved MQTT integration.
-* Additional diagnostics.
-* Automated testing.
+* Improved retry and error handling.
+* Automated tests.
+* More MQTT functionality.
+* Additional vehicle commands.
+* Improved diagnostics and health monitoring.
 
-## Important notice
+---
 
-This project is an independent, community-developed integration.
+# Important notice
+
+This project is an independent community integration.
 
 It is not an official Škoda or Volkswagen Group product.
 
-The MyŠkoda Python library used by this project is an unofficial interface and depends on services controlled by Škoda. API changes may therefore break functionality without notice.
+The MyŠkoda interface depends on services controlled by Škoda. Changes to those services or APIs may therefore affect functionality without notice.
 
-## License
+---
+
+# License
 
 See [LICENSE](LICENSE).
+
 

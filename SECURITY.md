@@ -1,51 +1,75 @@
 # Security Policy
 
-## Supported Versions
+## Docker-MQTT2Domoticz-MySkoda
 
-Security fixes are currently provided for the latest released version of the project.
+This document describes the security considerations for the project.
 
-| Version | Supported |
-| ------- | --------- |
-| 0.1.x   | Yes       |
-| < 0.1.0 | No        |
+**Current release: 0.1.1**
 
-## Reporting a Security Vulnerability
+---
 
-Please **do not publicly disclose security vulnerabilities before they have been investigated**.
+# Supported Versions
 
-If you discover a security issue, please report it privately to the repository maintainer through GitHub.
+| Version | Supported   |
+| ------- | ----------- |
+| 0.1.1   | Yes         |
+| 0.1.x   | Best effort |
+| < 0.1.0 | No          |
 
-When reporting a vulnerability, please include:
+Security fixes are primarily developed against the latest release.
+
+---
+
+# Reporting a Security Vulnerability
+
+Please report security vulnerabilities privately rather than publishing them immediately in a public GitHub issue.
+
+A security report should contain:
 
 * A description of the vulnerability.
 * The affected version.
-* Steps required to reproduce the issue.
-* The potential security impact.
-* Any relevant logs or screenshots, after removing credentials and personal information.
-* A proposed mitigation, if known.
+* Steps to reproduce the issue.
+* Potential security impact.
+* Relevant logs, after removing sensitive information.
+* A suggested mitigation, if available.
 
-Please do not include:
+Do **not** include secrets in a security report.
+
+In particular, never send:
 
 * MyŠkoda passwords.
 * Domoticz passwords.
+* MQTT credentials.
 * API tokens.
 * SSH private keys.
-* MQTT credentials.
 * Vehicle security PINs.
-* Complete VINs unless strictly necessary.
-* GPS coordinates or other personal data.
+* Unnecessary VINs.
+* GPS coordinates.
+* Personal account information.
 
-## Credentials and Secrets
+---
 
-This project requires credentials to communicate with MyŠkoda and, optionally, Domoticz and MQTT.
+# Credentials
 
-Secrets must **never be committed to Git**.
+The application uses credentials to communicate with external services.
 
-The following files should remain local:
+Typical credentials include:
+
+```text
+SKODA_USERNAME
+SKODA_PASSWORD
+SKODA_SPIN
+DOMOTICZ_USER
+DOMOTICZ_PASSWORD
+```
+
+These values belong in:
 
 ```text
 .env
 ```
+
+and must never be committed to Git.
 
 The repository provides:
 
@@ -53,115 +77,46 @@ The repository provides:
 .env.example
 ```
 
-as a configuration template.
+as a template.
 
-Before committing changes, verify:
+---
 
-```bash
-git status
-```
+# Protect `.env`
 
-and ensure that `.env` is not staged.
+The `.env` file contains sensitive credentials.
 
-You can also verify that Git ignores it:
-
-```bash
-git check-ignore -v .env
-```
-
-## Vehicle Information
-
-Vehicle configuration may contain personally identifiable or sensitive information.
-
-In particular:
-
-* VINs
-* Vehicle names
-* GPS positions
-* Mileage
-* Vehicle status
-* Maintenance information
-
-should be treated as private information.
-
-Do not publish real vehicle data in:
-
-* GitHub issues
-* Pull requests
-* Documentation
-* Screenshots
-* Debug logs
-* Public repositories
-
-Use placeholders such as:
-
-```text
-YOUR_VIN
-example@example.com
-192.0.2.10
-```
-
-when documenting configuration.
-
-## Logging
-
-Logs may contain information returned by the MyŠkoda service or Domoticz.
-
-Before sharing logs publicly, inspect them for:
-
-* Email addresses
-* VINs
-* GPS coordinates
-* Authentication information
-* Vehicle identifiers
-* Security-related information
-
-Do not enable unnecessarily verbose logging in a production environment if it could expose sensitive vehicle information.
-
-## Docker Security
-
-The container requires network access to communicate with MyŠkoda and Domoticz.
-
-The recommended deployment uses:
-
-```yaml
-network_mode: host
-```
-
-because it simplifies communication with services running on the host.
-
-This also means that the container shares the host network namespace. The Docker host should therefore be appropriately secured.
-
-The container should not be run with unnecessary privileges.
-
-Do not add:
-
-```yaml
-privileged: true
-```
-
-unless a future feature explicitly requires it.
-
-## File Permissions
-
-The `.env` file contains credentials and should have restrictive permissions where supported:
+On Linux:
 
 ```bash
 chmod 600 .env
 ```
 
-The state directory should also be protected from unauthorized users if it contains vehicle-specific information.
+Verify that Git ignores it:
 
-## Git Security
+```bash
+git check-ignore -v .env
+```
 
-Before every commit, check:
+Before committing:
+
+```bash
+git status
+```
+
+Confirm that `.env` does not appear in the staged files.
+
+---
+
+# Git security
+
+Before every commit:
 
 ```bash
 git status
 git diff --cached
 ```
 
-Never commit:
+Do not commit files containing:
 
 ```text
 .env
@@ -173,30 +128,296 @@ credentials.json
 secrets.json
 ```
 
-If a secret is accidentally committed, **removing the file in a later commit is not sufficient**. The secret should be considered compromised and replaced immediately.
+If a credential is accidentally committed, deleting the file in a later commit does **not** make the credential safe.
 
-For example, if a password has been committed:
+Immediately:
 
-1. Change/revoke the password or credential.
-2. Remove the secret from the repository history.
-3. Check whether the credential was exposed publicly.
-4. Review relevant logs for unauthorized use.
+1. Revoke or change the credential.
+2. Remove the secret from Git history.
+3. Check whether the repository was publicly accessible.
+4. Review relevant service logs where possible.
 
-## Dependency Security
+---
 
-The project depends on external Python packages, including the MyŠkoda library.
+# Vehicle information
 
-Dependencies should be kept up to date where practical.
+The application handles vehicle-related information that should be considered private.
 
-Security-sensitive dependency updates should be tested before deployment.
+Potentially sensitive information includes:
 
-## Responsible Disclosure
+* VINs.
+* Vehicle names.
+* Mileage.
+* Driving range.
+* Vehicle status.
+* Maintenance information.
+* Lock status.
+* GPS position.
+* Vehicle commands.
 
-Please allow reasonable time for a vulnerability to be investigated and fixed before making details public.
+Do not publish real vehicle information in public:
 
-Security reports will be reviewed and addressed according to their severity and practical impact.
+* GitHub issues.
+* Pull requests.
+* Documentation.
+* Screenshots.
+* Debug logs.
 
-## Scope
+Use placeholders such as:
+
+```text
+YOUR_VIN
+YOUR_VEHICLE
+example@example.com
+```
+
+when documenting the project.
+
+---
+
+# GPS information
+
+GPS data is particularly sensitive.
+
+If GPS functionality is not required, disable it:
+
+```dotenv
+GPS_ENABLED=false
+```
+
+Avoid publishing logs containing vehicle positions.
+
+---
+
+# Vehicle commands
+
+The application can expose commands such as:
+
+* Lock.
+* Unlock.
+* Wakeup.
+* Honk / flash.
+* Start/stop climatisation.
+* Window heating.
+
+These commands can cause real-world actions.
+
+Access to the Domoticz interface should therefore be appropriately protected.
+
+Do not expose the Domoticz API or this bridge directly to the public Internet without suitable authentication and network security controls.
+
+---
+
+# Domoticz permissions
+
+Version 0.1.1 introduces automatic device provisioning.
+
+The bridge may therefore perform Domoticz operations including:
+
+* Reading hardware.
+* Reading devices.
+* Creating Dummy hardware.
+* Creating virtual devices.
+* Configuring devices.
+* Updating devices.
+
+The Domoticz account used by the application should have only the permissions necessary for these operations.
+
+Where practical, use a **dedicated Domoticz account** for the bridge.
+
+Do not use a full administrator account unless required by the Domoticz installation.
+
+---
+
+# Automatic provisioning
+
+Automatic provisioning increases the privileges required by the Domoticz account compared with a read/update-only integration.
+
+The provisioning functionality should therefore be disabled when it is not required:
+
+```dotenv
+DOMOTICZ_PROVISION=false
+```
+
+When provisioning is enabled, review the Domoticz account permissions carefully.
+
+---
+
+# Device state
+
+The application stores Domoticz IDX mappings in:
+
+```text
+state/devices.json
+```
+
+This file can contain the relationship between:
+
+```text
+vehicle → Domoticz device → IDX
+```
+
+It should therefore be treated as application state and protected from unauthorized modification.
+
+The file does not replace the need to protect the actual Domoticz installation.
+
+Back it up together with the application configuration.
+
+---
+
+# Docker security
+
+The recommended deployment uses:
+
+```yaml
+network_mode: host
+```
+
+This allows the container to communicate directly with services on the host network.
+
+Host networking also means the container shares the host's network namespace.
+
+The Docker host should therefore be appropriately secured.
+
+The container should not be granted unnecessary privileges.
+
+Do not add:
+
+```yaml
+privileged: true
+```
+
+unless a future feature explicitly requires it.
+
+Do not mount sensitive host directories into the container.
+
+---
+
+# Network exposure
+
+The bridge requires outbound network connectivity to MyŠkoda.
+
+It also requires connectivity to Domoticz.
+
+If MQTT is enabled, it requires connectivity to the configured MQTT broker.
+
+Where possible:
+
+* Restrict access to Domoticz.
+* Restrict MQTT access.
+* Do not expose the application directly to the Internet.
+* Use firewall rules appropriate to the deployment.
+* Use HTTPS where the environment requires encrypted Domoticz communication.
+
+---
+
+# Logging
+
+Logs can contain information returned by external services.
+
+Before sharing logs publicly, inspect them for:
+
+* Email addresses.
+* VINs.
+* GPS coordinates.
+* Vehicle identifiers.
+* Credentials.
+* Authentication information.
+* API responses containing personal data.
+
+Do not publish unrestricted debug logs containing private vehicle information.
+
+---
+
+# Backups
+
+Backups may contain:
+
+```text
+.env
+config/vehicles.csv
+state/devices.json
+```
+
+Treat backups as sensitive data.
+
+Store them securely and restrict access to authorized users.
+
+In particular, `.env` backups contain authentication credentials.
+
+---
+
+# Dependencies
+
+The application depends on external Python packages and services.
+
+Dependencies should be reviewed and updated regularly.
+
+Security updates should be tested before deployment.
+
+The MyŠkoda integration relies on an unofficial interface/library and therefore depends on the continued availability and behavior of external Škoda services.
+
+---
+
+# Secret handling during development
+
+Developers should use test credentials and placeholder vehicle information whenever possible.
+
+Never use production credentials in:
+
+* Source code.
+* Unit tests.
+* Documentation.
+* Example configuration files.
+* Git commit messages.
+* Public issue reports.
+
+The `.env.example` file must contain placeholders only.
+
+---
+
+# SSH keys
+
+GitHub SSH authentication is recommended for repository access.
+
+Only the **public** SSH key may be shared with GitHub.
+
+Never commit or publish:
+
+```text
+~/.ssh/id_ed25519
+~/.ssh/id_rsa
+```
+
+or any other private SSH key.
+
+If a private key is exposed, treat it as compromised and replace it.
+
+---
+
+# Incident response
+
+If credentials or other sensitive information are exposed:
+
+1. Stop using the exposed credential.
+2. Change or revoke it immediately.
+3. Determine where the information was exposed.
+4. Remove the information from repository history if applicable.
+5. Review logs for unauthorized access.
+6. Generate replacement credentials.
+7. Update the deployment securely.
+
+---
+
+# Responsible disclosure
+
+Security vulnerabilities should be reported privately.
+
+Please provide reasonable time for investigation and remediation before public disclosure.
+
+---
+
+# Scope
 
 This security policy covers:
 
@@ -204,20 +425,28 @@ This security policy covers:
 * Application source code.
 * Docker configuration supplied by this repository.
 * Credential handling implemented by the application.
-* Communication between the application and supported services.
+* Domoticz API integration.
+* Automatic Domoticz provisioning.
+* Application state handling.
 
-Security issues in external services such as:
+Issues in third-party infrastructure should normally be reported to the relevant provider.
 
-* Škoda's infrastructure,
-* MyŠkoda itself,
-* Domoticz,
-* Docker,
-* MQTT brokers,
-* Python dependencies
+This includes:
 
-should generally be reported to their respective maintainers when the issue is outside this project's control.
+* Škoda/MyŠkoda services.
+* Domoticz.
+* Docker.
+* MQTT brokers.
+* Python dependencies.
+* Hosting or network infrastructure.
 
-## Disclaimer
+---
 
-This project is an independent community project and is not affiliated with or endorsed by Škoda Auto or Volkswagen Group.
+# Disclaimer
+
+This is an independent community project.
+
+It is not affiliated with, sponsored by, or endorsed by Škoda Auto or Volkswagen Group.
+
+The application depends on external services that may change without notice.
 
