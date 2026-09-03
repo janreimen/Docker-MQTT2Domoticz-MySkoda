@@ -1,0 +1,4 @@
+{
+  "car_001": {"locked":1468,"lights_on":1469,"doors_open":1470,"windows_open":1471,"climatisation":1472,"range_km":1473,"mileage_km":1474,"inspection_due_days":1475,"position":1476,"honk_flash":1477,"window_heating":1478,"wakeup":1479},
+  "car_002": {"locked":1480,"lights_on":1481,"doors_open":1482,"windows_open":1483,"climatisation":1484,"range_km":1485,"mileage_km":1486,"inspection_due_days":1487,"position":1488,"honk_flash":1489,"window_heating":1490,"wakeup":1491}
+}

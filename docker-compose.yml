@@ -1,0 +1,17 @@
+services:
+  domoticz-myskoda:
+    build: .
+    container_name: domoticz-myskoda
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./config/vehicles.csv:/app/config/vehicles.csv:ro
+      - ./state:/app/state
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 128m

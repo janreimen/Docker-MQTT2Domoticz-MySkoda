@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+state/*.json
+config/vehicles.csv
+!state/devices.json
