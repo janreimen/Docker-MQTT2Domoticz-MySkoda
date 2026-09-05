@@ -3,10 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
-from typing import Any
 
 import aiohttp
 from myskoda import MySkoda
@@ -16,14 +13,12 @@ from domoticz_client import DomoticzClient
 from provisioner import provision
 from skoda_bridge import SkodaBridge
 from vehicles import load_vehicles, mask_vin
+from typing import Any
+
+VERSION = "0.1.1"
 
 
-VERSION = "0.1.3"
-
-
-log = logging.getLogger(
-    "domoticz_myskoda"
-)
+log = logging.getLogger("domoticz_myskoda")
 
 
 def load_device_mapping(
@@ -36,33 +31,19 @@ def load_device_mapping(
         return {}
 
     try:
-
         data = json.loads(
             file.read_text(
                 encoding="utf-8"
             )
         )
-
     except json.JSONDecodeError:
-
         log.warning(
             "Invalid devices.json; "
             "starting with empty mapping"
         )
-
         return {}
 
-    if not isinstance(
-        data,
-        dict,
-    ):
-
-        log.warning(
-            "devices.json does not contain "
-            "an object; starting with "
-            "empty mapping"
-        )
-
+    if not isinstance(data, dict):
         return {}
 
     return data
@@ -72,9 +53,6 @@ def save_device_mapping(
     path: str,
     mapping: dict[str, Any],
 ) -> None:
-    """
-    Atomically replace devices.json.
-    """
 
     file = Path(path)
 
@@ -83,84 +61,22 @@ def save_device_mapping(
         exist_ok=True,
     )
 
-    content = (
+    file.write_text(
         json.dumps(
             mapping,
             indent=2,
             sort_keys=True,
-        )
-        + "\n"
+        ) + "\n",
+        encoding="utf-8",
     )
-
-    fd, temporary_path = tempfile.mkstemp(
-        prefix=f".{file.name}.",
-        suffix=".tmp",
-        dir=str(file.parent),
-        text=True,
-    )
-
-    try:
-
-        with os.fdopen(
-            fd,
-            "w",
-            encoding="utf-8",
-        ) as handle:
-
-            handle.write(content)
-            handle.flush()
-            os.fsync(
-                handle.fileno()
-            )
-
-        os.replace(
-            temporary_path,
-            file,
-        )
-
-        # Best-effort directory fsync.
-
-        try:
-
-            directory_fd = os.open(
-                file.parent,
-                os.O_DIRECTORY,
-            )
-
-            try:
-                os.fsync(
-                    directory_fd
-                )
-            finally:
-                os.close(
-                    directory_fd
-                )
-
-        except OSError:
-            pass
-
-    except Exception:
-
-        try:
-            os.unlink(
-                temporary_path
-            )
-        except OSError:
-            pass
-
-        raise
 
 
 async def update_vehicle(
     domoticz: DomoticzClient,
     device_mapping: dict[str, int],
-    snapshot: Any,
+    snapshot,
     enable_gps: bool,
 ) -> None:
-
-    # ================================================================
-    # Switches
-    # ================================================================
 
     switches = {
         "locked": snapshot.locked,
@@ -175,9 +91,7 @@ async def update_vehicle(
         if value is None:
             continue
 
-        idx = device_mapping.get(
-            key
-        )
+        idx = device_mapping.get(key)
 
         if idx is None:
             continue
@@ -186,10 +100,6 @@ async def update_vehicle(
             idx,
             value,
         )
-
-    # ================================================================
-    # Counters
-    # ================================================================
 
     counters = {
         "range_km": snapshot.range_km,
@@ -203,9 +113,7 @@ async def update_vehicle(
         if value is None:
             continue
 
-        idx = device_mapping.get(
-            key
-        )
+        idx = device_mapping.get(key)
 
         if idx is None:
             continue
@@ -214,10 +122,6 @@ async def update_vehicle(
             idx,
             value,
         )
-
-    # ================================================================
-    # GPS position
-    # ================================================================
 
     if (
         enable_gps
@@ -236,8 +140,7 @@ async def update_vehicle(
 
             await domoticz.set_text(
                 idx,
-                f"{latitude:.6f},"
-                f"{longitude:.6f}",
+                f"{latitude:.6f},{longitude:.6f}",
             )
 
 
@@ -285,10 +188,6 @@ async def run() -> None:
         timeout=timeout
     ) as session:
 
-        # ============================================================
-        # MySkoda
-        # ============================================================
-
         myskoda = MySkoda(
             session,
             mqtt_enabled=True,
@@ -303,10 +202,6 @@ async def run() -> None:
             "MySkoda connection ready"
         )
 
-        # ============================================================
-        # Domoticz
-        # ============================================================
-
         domoticz = DomoticzClient(
             session=session,
             base_url=config.domoticz_url,
@@ -314,9 +209,9 @@ async def run() -> None:
             password=config.domoticz_password,
         )
 
-        # ============================================================
-        # Automatic provisioning
-        # ============================================================
+        # -------------------------------------------------
+        # Automatic Domoticz provisioning
+        # -------------------------------------------------
 
         if config.domoticz_provision:
 
@@ -346,23 +241,19 @@ async def run() -> None:
                 "Automatic Domoticz provisioning disabled"
             )
 
-        # ============================================================
-        # Vehicle bridges
-        # ============================================================
-
         bridges = {
             vehicle.vehicle_id:
                 SkodaBridge(
                     myskoda,
                     vehicle.vin,
-                    vehicle.name,
+                    config.enable_gps,
                 )
             for vehicle in vehicles
         }
 
-        # ============================================================
+        # -------------------------------------------------
         # Poll loop
-        # ============================================================
+        # -------------------------------------------------
 
         while True:
 
@@ -373,9 +264,7 @@ async def run() -> None:
                     log.info(
                         "Polling %s (%s)",
                         vehicle.vehicle_id,
-                        mask_vin(
-                            vehicle.vin
-                        ),
+                        mask_vin(vehicle.vin),
                     )
 
                     snapshot = await bridges[
@@ -420,9 +309,7 @@ async def run() -> None:
 
 
 def main() -> None:
-    asyncio.run(
-        run()
-    )
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

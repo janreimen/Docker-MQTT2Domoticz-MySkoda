@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("myskoda")
 
 
 @dataclass
@@ -24,189 +24,340 @@ class VehicleSnapshot:
     position: tuple[float, float] | None = None
 
 
-def dump(value: Any) -> Any:
-
-    if value is None:
-        return None
-
-    if hasattr(value, "model_dump"):
-        try:
-            return value.model_dump()
-        except Exception:
-            pass
-
-    if isinstance(value, dict):
-        return {
-            key: dump(item)
-            for key, item in value.items()
-        }
-
-    if isinstance(value, (list, tuple)):
-        return [
-            dump(item)
-            for item in value
-        ]
-
-    if hasattr(value, "__dict__"):
-        try:
-            return {
-                key: dump(item)
-                for key, item in vars(value).items()
-                if not key.startswith("_")
-            }
-        except Exception:
-            pass
-
-    return value
-
-
-def find(
-    value: Any,
-    names: set[str],
-) -> Any:
-
-    value = dump(value)
-
-    if isinstance(value, dict):
-
-        for key, item in value.items():
-
-            normalized = (
-                str(key)
-                .lower()
-                .replace("-", "_")
-            )
-
-            if normalized in names:
-                return item
-
-        for item in value.values():
-
-            result = find(item, names)
-
-            if result is not None:
-                return result
-
-    elif isinstance(value, list):
-
-        for item in value:
-
-            result = find(item, names)
-
-            if result is not None:
-                return result
-
-    return None
-
-
-def as_bool(value: Any) -> bool | None:
-
-    if isinstance(value, bool):
-        return value
-
-    if value is None:
-        return None
-
-    text = str(value).strip().lower()
-
-    if text in {
-        "true",
-        "1",
-        "on",
-        "yes",
-        "open",
-        "unlocked",
-    }:
-        return True
-
-    if text in {
-        "false",
-        "0",
-        "off",
-        "no",
-        "closed",
-        "locked",
-    }:
-        return False
-
-    return None
-
-
-def as_int(value: Any) -> int | None:
-
-    if value is None:
-        return None
-
-    try:
-        return int(float(str(value).replace(",", ".")))
-    except (TypeError, ValueError):
-        return None
-
-
 class SkodaBridge:
 
     def __init__(
         self,
         myskoda: Any,
         vin: str,
-        enable_gps: bool = True,
+        vehicle_name: str,
     ) -> None:
-
         self.myskoda = myskoda
         self.vin = vin
-        self.enable_gps = enable_gps
+        self.vehicle_name = vehicle_name
 
-    async def _position(
-        self,
-    ) -> tuple[float, float] | None:
+    # ================================================================
+    # Generic helpers
+    # ================================================================
 
-        if not self.enable_gps:
+    @staticmethod
+    def dump(
+        value: Any,
+    ) -> Any:
+
+        if value is None:
             return None
 
-        positions = await self.myskoda.get_positions(
-            self.vin
-        )
+        if isinstance(value, dict):
+            return value
 
-        data = dump(positions)
-
-        if not isinstance(data, dict):
-            return None
-
-        position_list = data.get("positions", [])
-
-        if not isinstance(position_list, list):
-            return None
-
-        for position in position_list:
-
-            if not isinstance(position, dict):
-                continue
-
-            gps = position.get(
-                "gps_coordinates",
-                {},
-            )
-
-            if not isinstance(gps, dict):
-                continue
-
-            latitude = gps.get("latitude")
-            longitude = gps.get("longitude")
-
-            if latitude is None or longitude is None:
-                continue
-
+        if hasattr(
+            value,
+            "model_dump",
+        ):
             try:
-                return (
-                    float(latitude),
-                    float(longitude),
-                )
-            except (TypeError, ValueError):
-                continue
+                return value.model_dump()
+            except Exception:
+                pass
+
+        if hasattr(
+            value,
+            "dict",
+        ):
+            try:
+                return value.dict()
+            except Exception:
+                pass
+
+        if hasattr(
+            value,
+            "__dict__",
+        ):
+            try:
+                return vars(value)
+            except Exception:
+                pass
+
+        return value
+
+    @classmethod
+    def find(
+        cls,
+        value: Any,
+        *keys: str,
+    ) -> Any:
+
+        value = cls.dump(value)
+
+        if isinstance(value, dict):
+
+            for key in keys:
+
+                if key in value:
+                    return value[key]
 
         return None
 
-    async def snapshot(self) -> VehicleSnapshot:
+    @staticmethod
+    def as_bool(
+        value: Any,
+    ) -> bool | None:
+
+        if value is None:
+            return None
+
+        if isinstance(
+            value,
+            bool,
+        ):
+            return value
+
+        if isinstance(
+            value,
+            (int, float),
+        ):
+            return bool(value)
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            normalized = (
+                value.strip().lower()
+            )
+
+            if normalized in {
+                "true",
+                "1",
+                "yes",
+                "on",
+                "locked",
+                "active",
+            }:
+                return True
+
+            if normalized in {
+                "false",
+                "0",
+                "no",
+                "off",
+                "unlocked",
+                "inactive",
+            }:
+                return False
+
+        return None
+
+    @staticmethod
+    def as_int(
+        value: Any,
+    ) -> int | None:
+
+        if value is None:
+            return None
+
+        if isinstance(
+            value,
+            bool,
+        ):
+            return int(value)
+
+        if isinstance(
+            value,
+            int,
+        ):
+            return value
+
+        if isinstance(
+            value,
+            float,
+        ):
+            return int(value)
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            try:
+
+                value = value.strip()
+
+                if not value:
+                    return None
+
+                return int(
+                    float(value)
+                )
+
+            except ValueError:
+                return None
+
+        return None
+
+    # ================================================================
+    # Safe API access
+    # ================================================================
+
+    async def _safe_call(
+        self,
+        name: str,
+        coroutine: Any,
+    ) -> Any:
+
+        try:
+
+            return await coroutine
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as exc:
+
+            log.warning(
+                "%s failed for %s: %s",
+                name,
+                self.vehicle_name,
+                exc,
+            )
+
+            return None
+
+    # ================================================================
+    # Position
+    # ================================================================
+
+    async def _position(
+        self,
+        positions: Any = None,
+    ) -> tuple[float, float] | None:
+
+        if positions is None:
+
+            positions = await self._safe_call(
+                "get_positions",
+                self.myskoda.get_positions(
+                    self.vin
+                ),
+            )
+
+        if positions is None:
+            return None
+
+        positions = self.dump(
+            positions
+        )
+
+        if isinstance(
+            positions,
+            dict,
+        ):
+
+            for key in (
+                "positions",
+                "position",
+                "items",
+                "data",
+                "result",
+            ):
+
+                if key in positions:
+                    positions = positions[key]
+                    break
+
+        if isinstance(
+            positions,
+            list,
+        ):
+
+            if not positions:
+                return None
+
+            positions = positions[-1]
+
+        positions = self.dump(
+            positions
+        )
+
+        if not isinstance(
+            positions,
+            dict,
+        ):
+            return None
+
+        latitude = self.find(
+            positions,
+            "latitude",
+            "lat",
+        )
+
+        longitude = self.find(
+            positions,
+            "longitude",
+            "lon",
+            "lng",
+        )
+
+        if (
+            latitude is None
+            or longitude is None
+        ):
+
+            nested = self.find(
+                positions,
+                "position",
+                "coordinates",
+            )
+
+            nested = self.dump(
+                nested
+            )
+
+            if isinstance(
+                nested,
+                dict,
+            ):
+
+                latitude = self.find(
+                    nested,
+                    "latitude",
+                    "lat",
+                )
+
+                longitude = self.find(
+                    nested,
+                    "longitude",
+                    "lon",
+                    "lng",
+                )
+
+        if (
+            latitude is None
+            or longitude is None
+        ):
+            return None
+
+        try:
+
+            return (
+                float(latitude),
+                float(longitude),
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    # ================================================================
+    # Snapshot
+    # ================================================================
+
+    async def snapshot(
+        self,
+    ) -> VehicleSnapshot:
 
         (
             status,
@@ -214,99 +365,231 @@ class SkodaBridge:
             health,
             maintenance,
             air_conditioning,
+            positions,
         ) = await asyncio.gather(
-            self.myskoda.get_status(self.vin),
-            self.myskoda.get_driving_range(self.vin),
-            self.myskoda.get_health(self.vin),
-            self.myskoda.get_maintenance(self.vin),
-            self.myskoda.get_air_conditioning(self.vin),
+
+            self._safe_call(
+                "get_status",
+                self.myskoda.get_status(
+                    self.vin
+                ),
+            ),
+
+            self._safe_call(
+                "get_driving_range",
+                self.myskoda.get_driving_range(
+                    self.vin
+                ),
+            ),
+
+            self._safe_call(
+                "get_health",
+                self.myskoda.get_health(
+                    self.vin
+                ),
+            ),
+
+            self._safe_call(
+                "get_maintenance",
+                self.myskoda.get_maintenance(
+                    self.vin
+                ),
+            ),
+
+            self._safe_call(
+                "get_air_conditioning",
+                self.myskoda.get_air_conditioning(
+                    self.vin
+                ),
+            ),
+
+            self._safe_call(
+                "get_positions",
+                self.myskoda.get_positions(
+                    self.vin
+                ),
+            ),
+
+            return_exceptions=False,
         )
 
-        position = await self._position()
+        status_data = self.dump(
+            status
+        )
 
-        return VehicleSnapshot(
-            locked=as_bool(
-                find(
-                    status,
-                    {
-                        "doors_locked",
-                        "locked",
-                    },
+        range_data = self.dump(
+            driving_range
+        )
+
+        health_data = self.dump(
+            health
+        )
+
+        maintenance_data = self.dump(
+            maintenance
+        )
+
+        ac_data = self.dump(
+            air_conditioning
+        )
+
+        # ============================================================
+        # Status
+        # ============================================================
+
+        locked = self.as_bool(
+            self.find(
+                status_data,
+                "doors_locked",
+                "locked",
+            )
+        )
+
+        lights_on = self.as_bool(
+            self.find(
+                status_data,
+                "lights_on",
+                "lights",
+            )
+        )
+
+        doors_open = self.as_bool(
+            self.find(
+                status_data,
+                "doors_open",
+                "door_open",
+            )
+        )
+
+        windows_open = self.as_bool(
+            self.find(
+                status_data,
+                "windows_open",
+                "window_open",
+            )
+        )
+
+        # ============================================================
+        # Air conditioning
+        # ============================================================
+
+        ac_on = self.as_bool(
+            self.find(
+                ac_data,
+                "state",
+                "ac_on",
+                "air_conditioning_on",
+            )
+        )
+
+        if ac_on is None:
+
+            state = self.find(
+                ac_data,
+                "state",
+            )
+
+            if isinstance(
+                state,
+                str,
+            ):
+
+                normalized = (
+                    state.strip().lower()
                 )
-            ),
 
-            lights_on=as_bool(
-                find(
-                    status,
-                    {
-                        "lights_on",
-                        "lights",
-                    },
+                if normalized in {
+                    "on",
+                    "active",
+                    "running",
+                    "heating",
+                    "cooling",
+                }:
+                    ac_on = True
+
+                elif normalized in {
+                    "off",
+                    "inactive",
+                    "stopped",
+                    "idle",
+                }:
+                    ac_on = False
+
+        # ============================================================
+        # Range
+        # ============================================================
+
+        range_km = self.as_int(
+            self.find(
+                range_data,
+                "total_range_in_km",
+                "range_in_km",
+                "total_range",
+                "range",
+            )
+        )
+
+        # ============================================================
+        # Mileage
+        # ============================================================
+
+        mileage_km = self.as_int(
+            self.find(
+                health_data,
+                "mileage_in_km",
+                "mileage",
+                "odometer",
+            )
+        )
+
+        if mileage_km is None:
+
+            mileage_km = self.as_int(
+                self.find(
+                    status_data,
+                    "mileage_in_km",
+                    "mileage",
+                    "odometer",
                 )
-            ),
+            )
 
-            doors_open=as_bool(
-                find(
-                    status,
-                    {
-                        "doors_open",
-                        "door_open",
-                    },
-                )
-            ),
+        # ============================================================
+        # Inspection
+        # ============================================================
 
-            windows_open=as_bool(
-                find(
-                    status,
-                    {
-                        "windows_open",
-                        "window_open",
-                    },
-                )
-            ),
+        inspection_due_days = self.as_int(
+            self.find(
+                maintenance_data,
+                "inspection_due_in_days",
+                "inspection_due_days",
+                "inspection_days",
+            )
+        )
 
-            ac_on=as_bool(
-                find(
-                    air_conditioning,
-                    {
-                        "state",
-                        "ac_on",
-                        "air_conditioning_on",
-                    },
-                )
-            ),
+        # ============================================================
+        # Position
+        # ============================================================
 
-            range_km=as_int(
-                find(
-                    driving_range,
-                    {
-                        "total_range_in_km",
-                        "range_in_km",
-                        "total_range",
-                    },
-                )
-            ),
+        position = await self._position(
+            positions
+        )
 
-            mileage_km=as_int(
-                find(
-                    health,
-                    {
-                        "mileage_in_km",
-                        "mileage",
-                        "odometer",
-                    },
-                )
-            ),
-
-            inspection_due_days=as_int(
-                find(
-                    maintenance,
-                    {
-                        "inspection_due_in_days",
-                        "inspection_due_days",
-                    },
-                )
-            ),
-
+        snapshot = VehicleSnapshot(
+            locked=locked,
+            lights_on=lights_on,
+            doors_open=doors_open,
+            windows_open=windows_open,
+            ac_on=ac_on,
+            range_km=range_km,
+            mileage_km=mileage_km,
+            inspection_due_days=inspection_due_days,
             position=position,
         )
+
+        log.debug(
+            "Snapshot for %s: %s",
+            self.vehicle_name,
+            snapshot,
+        )
+
+        return snapshot

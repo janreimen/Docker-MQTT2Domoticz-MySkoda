@@ -9,49 +9,37 @@ from domoticz_client import DomoticzClient, DomoticzError
 log = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------------
-# Domoticz device definitions
-# ----------------------------------------------------------------------
-
 DEVICE_DEFINITIONS: dict[str, dict[str, Any]] = {
-
-    # Virtual switches
     "locked": {
         "suffix": "Locked",
         "sensor_type": 6,
         "switch_type": 19,
         "kind": "switch",
     },
-
     "lights_on": {
         "suffix": "Lights",
         "sensor_type": 6,
         "switch_type": 0,
         "kind": "switch",
     },
-
     "doors_open": {
         "suffix": "Doors",
         "sensor_type": 6,
         "switch_type": 11,
         "kind": "switch",
     },
-
     "windows_open": {
         "suffix": "Windows",
         "sensor_type": 6,
         "switch_type": 11,
         "kind": "switch",
     },
-
     "climatisation": {
         "suffix": "Climatisation",
         "sensor_type": 6,
         "switch_type": 0,
         "kind": "switch",
     },
-
-    # Absolute Custom Counters
     "range_km": {
         "suffix": "Range",
         "sensor_type": 113,
@@ -59,7 +47,6 @@ DEVICE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "quantity": "Distance",
         "units": "km",
     },
-
     "mileage_km": {
         "suffix": "Mileage",
         "sensor_type": 113,
@@ -67,7 +54,6 @@ DEVICE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "quantity": "Distance",
         "units": "km",
     },
-
     "inspection_due_days": {
         "suffix": "Inspection",
         "sensor_type": 113,
@@ -75,29 +61,23 @@ DEVICE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "quantity": "Time",
         "units": "days",
     },
-
-    # Text
     "position": {
         "suffix": "Position",
         "sensor_type": 5,
         "kind": "text",
     },
-
-    # Controls
     "honk_flash": {
         "suffix": "Honk / Flash",
         "sensor_type": 6,
         "switch_type": 9,
         "kind": "switch",
     },
-
     "window_heating": {
         "suffix": "Window Heating",
         "sensor_type": 6,
         "switch_type": 0,
         "kind": "switch",
     },
-
     "wakeup": {
         "suffix": "Wakeup",
         "sensor_type": 6,
@@ -107,24 +87,52 @@ DEVICE_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 
 
-# ----------------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------------
+def _vehicle_id(vehicle: Any) -> str:
+    value = getattr(
+        vehicle,
+        "vehicle_id",
+        None,
+    )
+
+    if value:
+        return str(value)
+
+    value = getattr(
+        vehicle,
+        "id",
+        None,
+    )
+
+    if value:
+        return str(value)
+
+    raise RuntimeError(
+        "Vehicle object has neither "
+        "vehicle_id nor id"
+    )
+
 
 def _vehicle_device_name(
     vehicle: Any,
     definition: dict[str, Any],
 ) -> str:
-    """
-    Produce the exact Domoticz device name.
-
-    Example:
-        Octavia RS [car_001] - Locked
-    """
     return (
-        f"{vehicle.name} [{vehicle.vehicle_id}] - "
+        f"{vehicle.name} "
+        f"[{_vehicle_id(vehicle)}] - "
         f"{definition['suffix']}"
     )
+
+
+def _safe_int(
+    value: Any,
+) -> int | None:
+    try:
+        return int(value)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
 
 
 def _find_device_by_name(
@@ -133,10 +141,40 @@ def _find_device_by_name(
 ) -> dict[str, Any] | None:
 
     for device in devices:
-        if str(device.get("Name", "")) == name:
+        if str(
+            device.get("Name", "")
+        ) == name:
             return device
 
     return None
+
+
+def _find_device_by_idx(
+    devices: list[dict[str, Any]],
+    idx: int,
+) -> dict[str, Any] | None:
+
+    for device in devices:
+        device_idx = _safe_int(
+            device.get("idx")
+        )
+
+        if device_idx == idx:
+            return device
+
+    return None
+
+
+def _device_belongs_to_hardware(
+    device: dict[str, Any],
+    hardware_idx: int,
+) -> bool:
+
+    device_hw = _safe_int(
+        device.get("HardwareID")
+    )
+
+    return device_hw == hardware_idx
 
 
 async def _configure_device(
@@ -180,42 +218,166 @@ async def _configure_device(
 
     else:
         raise RuntimeError(
-            f"Unknown Domoticz device kind: {kind}"
+            f"Unknown Domoticz device kind: "
+            f"{kind}"
         )
 
 
-# ----------------------------------------------------------------------
-# Provisioning
-# ----------------------------------------------------------------------
+async def _discover_hardware_idx(
+    client: DomoticzClient,
+    state: dict[str, Any],
+    all_devices: list[dict[str, Any]],
+    hardware_name: str,
+) -> int | None:
+    """
+    Determine the existing MySkoda hardware IDX.
+
+    Priority:
+
+    1. Validate persisted hardware IDX.
+    2. Search hardware by exact name.
+    3. Derive hardware from an existing MySkoda device.
+    4. Return None so the caller can create it.
+    """
+
+    stored_hw = _safe_int(
+        state.get("_hardware_idx")
+    )
+
+    if stored_hw is not None:
+
+        try:
+            hardware = await client.get_hardware()
+
+            for item in hardware:
+
+                item_idx = _safe_int(
+                    item.get("idx")
+                )
+
+                if item_idx != stored_hw:
+                    continue
+
+                item_name = str(
+                    item.get("Name", "")
+                )
+
+                if item_name == hardware_name:
+
+                    log.info(
+                        "Validated stored MySkoda "
+                        "hardware IDX %d",
+                        stored_hw,
+                    )
+
+                    return stored_hw
+
+                log.warning(
+                    "Stored MySkoda hardware IDX %d "
+                    "exists but has name '%s'; "
+                    "searching by exact hardware name",
+                    stored_hw,
+                    item_name,
+                )
+
+        except DomoticzError as exc:
+
+            log.warning(
+                "Could not validate stored hardware "
+                "IDX %d: %s",
+                stored_hw,
+                exc,
+            )
+
+            return stored_hw
+
+    # Exact hardware name has priority.
+
+    try:
+
+        hardware = await client.get_hardware_by_name(
+            hardware_name
+        )
+
+        if hardware is not None:
+
+            hardware_idx = _safe_int(
+                hardware.get("idx")
+            )
+
+            if hardware_idx is not None:
+
+                log.info(
+                    "Found existing Domoticz hardware "
+                    "'%s' with IDX %d",
+                    hardware_name,
+                    hardware_idx,
+                )
+
+                return hardware_idx
+
+    except DomoticzError as exc:
+
+        log.warning(
+            "Could not query Domoticz hardware: %s",
+            exc,
+        )
+
+    # Fall back to an existing MySkoda device.
+
+    for device in all_devices:
+
+        name = str(
+            device.get("Name", "")
+        )
+
+        if not name.startswith(
+            "MySkoda"
+        ):
+            continue
+
+        hardware_idx = _safe_int(
+            device.get("HardwareID")
+        )
+
+        if hardware_idx is not None:
+
+            log.info(
+                "Discovered MySkoda hardware "
+                "IDX %d from existing device '%s'",
+                hardware_idx,
+                name,
+            )
+
+            return hardware_idx
+
+    return None
+
 
 async def provision(
     client: DomoticzClient,
     vehicles: list[Any],
     devices: dict[str, dict[str, int]],
     hardware_name: str,
-) -> dict[str, dict[str, int]]:
-    """
-    Reconcile the required MySkoda Domoticz devices.
-
-    'devices' is the already-loaded devices.json mapping.
-
-    Existing hardware and devices are reused whenever possible.
-    Missing hardware/devices are created only when necessary.
-
-    The returned mapping is saved by main.py.
-    """
+) -> dict[str, Any]:
 
     log.info(
-        "Starting Domoticz provisioning for %d vehicle(s)",
+        "Starting Domoticz provisioning for "
+        "%d vehicle(s)",
         len(vehicles),
     )
 
-    # Keep the supplied mapping as the source of persisted IDXs.
-    state = devices if isinstance(devices, dict) else {}
+    state = (
+        devices
+        if isinstance(devices, dict)
+        else {}
+    )
 
-    # --------------------------------------------------------------
-    # 1. Discover visible Domoticz devices
-    # --------------------------------------------------------------
+    # ================================================================
+    # Discovery
+    # ================================================================
+
+    discovery_available = True
 
     try:
 
@@ -228,170 +390,119 @@ async def provision(
 
     except DomoticzError as exc:
 
+        discovery_available = False
+        all_devices = []
+
         log.warning(
             "Could not query Domoticz devices: %s",
             exc,
         )
 
-        # This is important for a restricted Domoticz user.
-        #
-        # If the user cannot list devices, we can still operate
-        # from the persisted devices.json mapping.
-        all_devices = []
+    # ================================================================
+    # Hardware
+    # ================================================================
 
-    # --------------------------------------------------------------
-    # 2. Determine hardware IDX
-    # --------------------------------------------------------------
+    hardware_idx = await _discover_hardware_idx(
+        client=client,
+        state=state,
+        all_devices=all_devices,
+        hardware_name=hardware_name,
+    )
 
-    hardware_idx: int | None = None
-
-    # First preference: stored hardware IDX.
-    stored_hw = state.get("_hardware_idx")
-
-    if stored_hw is not None:
-
-        try:
-
-            hardware_idx = int(stored_hw)
-
-            log.info(
-                "Using stored MySkoda hardware IDX %d",
-                hardware_idx,
-            )
-
-        except (TypeError, ValueError):
-
-            hardware_idx = None
-
-    # Second preference: derive hardware from an existing device.
-    if hardware_idx is None and all_devices:
-
-        for device in all_devices:
-
-            name = str(
-                device.get("Name", "")
-            )
-
-            if name.startswith("MySkoda"):
-
-                hw = device.get("HardwareID")
-
-                if hw is not None:
-
-                    try:
-
-                        hardware_idx = int(hw)
-
-                        log.info(
-                            "Discovered MySkoda hardware IDX %d "
-                            "from existing device '%s'",
-                            hardware_idx,
-                            name,
-                        )
-
-                        break
-
-                    except (
-                        TypeError,
-                        ValueError,
-                    ):
-                        pass
-
-    # Third preference: query Domoticz hardware directly.
-    if hardware_idx is None:
-
-        try:
-
-            hardware = (
-                await client.get_hardware_by_name(
-                    hardware_name
-                )
-            )
-
-            if hardware is not None:
-
-                hardware_idx = int(
-                    hardware["idx"]
-                )
-
-                log.info(
-                    "Found existing Domoticz hardware '%s' "
-                    "with IDX %d",
-                    hardware_name,
-                    hardware_idx,
-                )
-
-        except DomoticzError as exc:
-
-            log.warning(
-                "Could not query Domoticz hardware: %s",
-                exc,
-            )
-
-    # --------------------------------------------------------------
-    # 3. Create hardware only if genuinely missing
-    # --------------------------------------------------------------
+    hardware_created = False
 
     if hardware_idx is None:
 
         log.info(
             "Domoticz hardware '%s' does not exist; "
-            "attempting to create it",
+            "creating it",
             hardware_name,
         )
 
-        hardware_idx = (
-            await client.add_dummy_hardware(
-                hardware_name
-            )
+        hardware_idx = await client.add_dummy_hardware(
+            hardware_name
         )
 
+        hardware_created = True
+
         log.info(
-            "Created Domoticz Dummy hardware '%s' "
-            "with IDX %d",
+            "Created Domoticz Dummy hardware "
+            "'%s' with IDX %d",
             hardware_name,
             hardware_idx,
         )
+
+        if discovery_available:
+
+            try:
+
+                all_devices = await client.get_devices()
+
+            except DomoticzError as exc:
+
+                discovery_available = False
+
+                log.warning(
+                    "Could not refresh Domoticz devices "
+                    "after hardware creation: %s",
+                    exc,
+                )
 
     else:
 
         log.info(
-            "Reusing existing Domoticz Dummy hardware '%s' "
-            "IDX %d",
+            "Reusing existing Domoticz Dummy hardware "
+            "'%s' IDX %d",
             hardware_name,
             hardware_idx,
         )
 
-    # --------------------------------------------------------------
-    # 4. Devices belonging to our hardware
-    # --------------------------------------------------------------
+    # ================================================================
+    # Existing device inventory
+    # ================================================================
 
     devices_for_hardware = [
         device
         for device in all_devices
-        if str(
-            device.get("HardwareID", "")
-        ) == str(hardware_idx)
+        if _device_belongs_to_hardware(
+            device,
+            hardware_idx,
+        )
     ]
 
     log.info(
-        "Found %d existing device(s) on MySkoda hardware IDX %d",
+        "Found %d existing device(s) on MySkoda "
+        "hardware IDX %d",
         len(devices_for_hardware),
         hardware_idx,
     )
 
-    # --------------------------------------------------------------
-    # 5. Reconcile every vehicle
-    # --------------------------------------------------------------
+    # ================================================================
+    # Reconciliation
+    # ================================================================
 
-    mapping: dict[str, dict[str, int]] = {}
+    mapping: dict[
+        str,
+        dict[str, int]
+    ] = {}
+
+    total_created = 0
+    total_reused = 0
+    total_recovered = 0
 
     for vehicle in vehicles:
 
-        vehicle_mapping: dict[str, int] = {}
+        vehicle_id = _vehicle_id(
+            vehicle
+        )
+
+        vehicle_mapping: dict[
+            str,
+            int
+        ] = {}
 
         stored_vehicle = state.get(
-            vehicle.vehicle_id,
+            vehicle_id,
             {},
         )
 
@@ -400,6 +511,15 @@ async def provision(
             dict,
         ):
             stored_vehicle = {}
+
+        vehicle_created = 0
+        vehicle_reused = 0
+        vehicle_recovered = 0
+
+        log.info(
+            "Reconciling vehicle %s",
+            vehicle_id,
+        )
 
         for key, definition in (
             DEVICE_DEFINITIONS.items()
@@ -410,9 +530,9 @@ async def provision(
                 definition,
             )
 
-            # ------------------------------------------------------
-            # First: exact-name discovery
-            # ------------------------------------------------------
+            # --------------------------------------------------------
+            # Existing device by exact name
+            # --------------------------------------------------------
 
             existing = _find_device_by_name(
                 devices_for_hardware,
@@ -421,94 +541,159 @@ async def provision(
 
             if existing is not None:
 
-                idx = int(
-                    existing["idx"]
+                idx = _safe_int(
+                    existing.get("idx")
                 )
 
-                log.info(
-                    "Reusing existing device IDX %d: %s",
-                    idx,
-                    name,
-                )
+                if idx is None:
 
-                # Existing devices may have been created previously
-                # with incorrect sensor types. Reconfigure them.
-                try:
-
-                    await _configure_device(
-                        client=client,
-                        idx=idx,
-                        name=name,
-                        definition=definition,
+                    log.warning(
+                        "Ignoring device '%s' "
+                        "because IDX is invalid",
+                        name,
                     )
 
-                except DomoticzError as exc:
+                else:
 
-                    # Restricted users may be able to update values
-                    # but not change device configuration.
-                    #
-                    # That is not fatal because the device itself
-                    # already exists and can still be mapped.
-                    log.warning(
-                        "Could not configure existing device "
-                        "IDX %d '%s': %s",
+                    log.info(
+                        "Reusing existing device "
+                        "IDX %d: %s",
                         idx,
                         name,
-                        exc,
                     )
 
-                vehicle_mapping[key] = idx
-                continue
+                    try:
 
-            # ------------------------------------------------------
-            # Second: persisted state mapping
-            # ------------------------------------------------------
+                        await _configure_device(
+                            client=client,
+                            idx=idx,
+                            name=name,
+                            definition=definition,
+                        )
 
-            stored_idx = stored_vehicle.get(
-                key
+                    except DomoticzError as exc:
+
+                        log.warning(
+                            "Could not configure existing "
+                            "device IDX %d '%s': %s",
+                            idx,
+                            name,
+                            exc,
+                        )
+
+                    vehicle_mapping[key] = idx
+                    vehicle_reused += 1
+                    total_reused += 1
+
+                    continue
+
+            # --------------------------------------------------------
+            # Persisted IDX
+            # --------------------------------------------------------
+
+            stored_idx = _safe_int(
+                stored_vehicle.get(key)
             )
 
             if stored_idx is not None:
 
-                try:
+                persisted_device = (
+                    _find_device_by_idx(
+                        devices_for_hardware,
+                        stored_idx,
+                    )
+                )
 
-                    idx = int(
-                        stored_idx
+                if persisted_device is not None:
+
+                    current_name = str(
+                        persisted_device.get(
+                            "Name",
+                            "",
+                        )
                     )
 
                     log.info(
-                        "Reusing state-mapped device IDX %d: %s",
-                        idx,
+                        "Recovering persisted device "
+                        "IDX %d for '%s' "
+                        "(current name: '%s')",
+                        stored_idx,
+                        name,
+                        current_name,
+                    )
+
+                    try:
+
+                        await _configure_device(
+                            client=client,
+                            idx=stored_idx,
+                            name=name,
+                            definition=definition,
+                        )
+
+                    except DomoticzError as exc:
+
+                        log.warning(
+                            "Could not reconfigure "
+                            "recovered device IDX %d "
+                            "'%s': %s",
+                            stored_idx,
+                            name,
+                            exc,
+                        )
+
+                    vehicle_mapping[key] = (
+                        stored_idx
+                    )
+
+                    vehicle_recovered += 1
+                    total_recovered += 1
+
+                    continue
+
+                if not discovery_available:
+
+                    log.warning(
+                        "Cannot validate persisted "
+                        "device IDX %d for '%s'; "
+                        "device discovery unavailable. "
+                        "Keeping persisted IDX.",
+                        stored_idx,
                         name,
                     )
 
-                    vehicle_mapping[key] = idx
+                    vehicle_mapping[key] = (
+                        stored_idx
+                    )
+
+                    vehicle_recovered += 1
+                    total_recovered += 1
+
                     continue
 
-                except (
-                    TypeError,
-                    ValueError,
-                ):
-                    pass
+                log.warning(
+                    "Persisted device IDX %d for "
+                    "'%s' no longer exists on "
+                    "MySkoda hardware",
+                    stored_idx,
+                    name,
+                )
 
-            # ------------------------------------------------------
-            # Third: genuinely missing device
-            # ------------------------------------------------------
+            # --------------------------------------------------------
+            # Missing device
+            # --------------------------------------------------------
 
-            log.warning(
-                "Domoticz device '%s' does not exist; "
-                "attempting to create it",
+            log.info(
+                "Creating missing Domoticz device: %s",
                 name,
             )
 
-            idx = (
-                await client.create_virtual_sensor(
-                    hardware_idx=hardware_idx,
-                    sensor_name=name,
-                    sensor_type=int(
-                        definition["sensor_type"]
-                    ),
-                )
+            idx = await client.create_virtual_sensor(
+                hardware_idx=hardware_idx,
+                sensor_name=name,
+                sensor_type=int(
+                    definition["sensor_type"]
+                ),
             )
 
             await _configure_device(
@@ -526,7 +711,10 @@ async def provision(
 
             vehicle_mapping[key] = idx
 
-            # Add to local discovery list.
+            vehicle_created += 1
+            total_created += 1
+
+            # Add immediately to inventory.
             devices_for_hardware.append(
                 {
                     "idx": idx,
@@ -535,22 +723,38 @@ async def provision(
                 }
             )
 
-        mapping[vehicle.vehicle_id] = vehicle_mapping
+        mapping[vehicle_id] = (
+            vehicle_mapping
+        )
 
-    # --------------------------------------------------------------
-    # 6. Persisted mapping
-    # --------------------------------------------------------------
+        log.info(
+            "Vehicle %s provisioning: "
+            "reused=%d recovered=%d created=%d",
+            vehicle_id,
+            vehicle_reused,
+            vehicle_recovered,
+            vehicle_created,
+        )
 
-    result: dict[str, dict[str, int]] = {
-        "_hardware_idx": hardware_idx,  # type: ignore[dict-item]
+    # ================================================================
+    # Persistent state
+    # ================================================================
+
+    result: dict[str, Any] = {
+        "_hardware_idx": hardware_idx,
     }
 
     result.update(mapping)
 
     log.info(
-        "Domoticz provisioning mapping prepared "
-        "for %d vehicle(s)",
+        "Domoticz provisioning complete: "
+        "vehicles=%d hardware_created=%s "
+        "reused=%d recovered=%d created=%d",
         len(vehicles),
+        hardware_created,
+        total_reused,
+        total_recovered,
+        total_created,
     )
 
     return result

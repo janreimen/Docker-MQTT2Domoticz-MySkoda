@@ -21,23 +21,20 @@ class Config:
     mqtt_domoticz_out_topic: str
 
     poll_interval_seconds: int
-
     enable_gps: bool
     skoda_ac_temperature: float
 
     vehicles_csv_path: str
     devices_json_path: str
 
+    str
     log_level: str
 
     domoticz_provision: bool
     domoticz_hardware_name: str
 
 
-def env(
-    name: str,
-    default: str | None = None,
-) -> str | None:
+def env(name: str, default: str | None = None) -> str | None:
     value = os.getenv(name, default)
 
     if value is None:
@@ -57,10 +54,7 @@ def required(name: str) -> str:
     return value
 
 
-def boolean(
-    name: str,
-    default: bool,
-) -> bool:
+def boolean(name: str, default: bool) -> bool:
     value = env(name)
 
     if value is None:
@@ -80,63 +74,33 @@ def load_config() -> Config:
         skoda_password=required("SKODA_PASSWORD"),
         skoda_spin=env("SKODA_SPIN") or None,
 
-        domoticz_url=required(
-            "DOMOTICZ_URL"
-        ).rstrip("/"),
-        domoticz_user=required(
-            "DOMOTICZ_USER"
-        ),
-        domoticz_password=required(
-            "DOMOTICZ_PASSWORD"
-        ),
+        domoticz_url=required("DOMOTICZ_URL").rstrip("/"),
+        domoticz_user=required("DOMOTICZ_USER"),
+        domoticz_password=required("DOMOTICZ_PASSWORD"),
 
         mqtt_host=required("MQTT_HOST"),
-        mqtt_port=int(
-            env("MQTT_PORT", "1883")
-        ),
-        mqtt_username=env(
-            "MQTT_USERNAME"
-        ) or None,
-        mqtt_password=env(
-            "MQTT_PASSWORD"
-        ) or None,
-
+        mqtt_port=int(env("MQTT_PORT", "1883")),
+        mqtt_username=env("MQTT_USERNAME") or None,
+        mqtt_password=env("MQTT_PASSWORD") or None,
         mqtt_domoticz_out_topic=env(
             "MQTT_DOMOTICZ_OUT_TOPIC",
             "skoda/out",
         ),
 
         poll_interval_seconds=int(
-            env(
-                "POLL_INTERVAL_SECONDS",
-                "1800",
-            )
+            env("POLL_INTERVAL_SECONDS", "1800")
         ),
 
-        enable_gps=boolean(
-            "ENABLE_GPS",
-            True,
-        ),
+        enable_gps=boolean("ENABLE_GPS", True),
 
         skoda_ac_temperature=float(
-            env(
-                "SKODA_AC_TEMPERATURE",
-                "21.0",
-            )
+            env("SKODA_AC_TEMPERATURE", "21.0")
         ),
 
-        vehicles_csv_path=required(
-            "VEHICLES_CSV_PATH"
-        ),
+        vehicles_csv_path=required("VEHICLES_CSV_PATH"),
+        devices_json_path=required("DEVICES_JSON_PATH"),
 
-        devices_json_path=required(
-            "DEVICES_JSON_PATH"
-        ),
-
-        log_level=env(
-            "LOG_LEVEL",
-            "INFO",
-        ).upper(),
+        log_level=env("LOG_LEVEL", "INFO").upper(),
 
         domoticz_provision=boolean(
             "DOMOTICZ_PROVISION",
