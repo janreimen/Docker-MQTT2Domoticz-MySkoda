@@ -122,7 +122,7 @@ def _vehicle_device_name(
         Octavia RS [car_001] - Locked
     """
     return (
-        f"{vehicle.name} [{vehicle.id}] - "
+        f"{vehicle.name} [{vehicle.vehicle_id}] - "
         f"{definition['suffix']}"
     )
 
@@ -391,7 +391,7 @@ async def provision(
         vehicle_mapping: dict[str, int] = {}
 
         stored_vehicle = state.get(
-            vehicle.id,
+            vehicle.vehicle_id,
             {},
         )
 
@@ -535,7 +535,7 @@ async def provision(
                 }
             )
 
-        mapping[vehicle.id] = vehicle_mapping
+        mapping[vehicle.vehicle_id] = vehicle_mapping
 
     # --------------------------------------------------------------
     # 6. Persisted mapping
