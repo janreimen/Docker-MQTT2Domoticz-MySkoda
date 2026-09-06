@@ -1,91 +1,83 @@
-# Security Policy
+# Security
 
-## Scope
+This is a personal home-lab bridge, not a hardened multi-tenant service.
+The notes below describe what the current code (v0.1.4) actually does
+with credentials and network traffic, based on reading `config.py`,
+`domoticz_client.py`, and `main.py` directly — not general best-practice
+boilerplate.
 
-This policy covers the MySkoda → Domoticz Docker bridge, version 0.1.x.
+## Credentials this container holds
 
-## Reporting vulnerabilities
+All loaded from environment variables via `config.py`, all in plaintext
+in your `.env` file:
 
-Please report security issues privately to the repository maintainer rather than publishing credentials, tokens, vehicle identifiers, GPS coordinates or exploit details in a public issue.
+- `SKODA_USERNAME` / `SKODA_PASSWORD` — your MySkoda account. Sent to
+  Skoda's cloud auth flow by the third-party `myskoda` library; this
+  project has no control over how Skoda's backend handles them beyond
+  what that library does.
+- `DOMOTICZ_USER` / `DOMOTICZ_PASSWORD` — **required** by this codebase's
+  `config.py` (not optional), meaning your Domoticz instance's web
+  authentication must be enabled for this to run at all.
+- `MQTT_USERNAME` / `MQTT_PASSWORD` — optional, for your Domoticz-side
+  MQTT broker. Currently unused for anything beyond being loaded (see
+  README's "control devices are inert" note) — no MQTT connection is
+  actually opened by this codebase yet.
 
-Replace this section with the maintainer's preferred private reporting address before publishing the repository.
+**Practical steps:**
+- `chmod 600 .env` and make sure it's excluded from any git history —
+  don't commit it.
+- Use a dedicated Domoticz user for this container if your instance
+  supports per-user API restrictions, rather than an admin account,
+  since `domoticz_client.py` calls `addhardware` / `createvirtualsensor`
+  / `setused` (device-management endpoints), not just value updates.
 
-## Secrets
+## Transport
 
-Never commit:
+`domoticz_client.py` builds requests via `aiohttp` to whatever
+`DOMOTICZ_URL` you set, with `aiohttp.BasicAuth` if a user/password is
+present:
 
-- MySkoda username/password
-- MySkoda S-PIN
-- Domoticz credentials
-- MQTT credentials
-- vehicle VINs unless intentionally public
-- GPS coordinates
-- exported `.env` files
-
-Use `.env` locally and keep it outside Git.
-
-## Domoticz least privilege
-
-The normal runtime account should have access only to the MySkoda devices it needs to update.
-
-Administrative permissions are required only for provisioning operations such as creating virtual hardware and sensors.
-
-The recommended lifecycle is:
-
-1. Provision once with an administrative account.
-2. Verify the created devices and `state/devices.json`.
-3. Disable provisioning.
-4. Run permanently with the restricted account.
-
-## Vehicle controls
-
-The underlying MySkoda API supports vehicle commands such as locking/unlocking, honking/flashing, air conditioning, window heating and wakeup. These controls can affect the physical vehicle and must be treated as privileged operations.
-
-Do not expose the bridge's credentials or Domoticz control endpoints to untrusted networks.
-
-## GPS
-
-Vehicle position data is sensitive. Set:
-
-```dotenv
-ENABLE_GPS=false
+```python
+auth = aiohttp.BasicAuth(self.username, self.password)
 ```
 
-if position data is not required.
+**Basic Auth sends credentials in a trivially reversible encoding, not
+encryption.** If `DOMOTICZ_URL` is `http://` rather than `https://`,
+those credentials go out in the clear on whatever network segment sits
+between this container and Domoticz. If this container ends up in a DMZ
+segment while Domoticz lives on an internal LAN, that credential traffic
+crosses a subnet boundary — worth putting Domoticz behind TLS (even a
+self-signed cert on an internal CA) before relying on this across
+segments, not just within one trusted LAN.
 
-Avoid publishing GPS coordinates to public dashboards, logs, Git repositories or public MQTT brokers.
+## Data at rest
 
-## Logging
+- `DEVICES_JSON_PATH` — just idx-to-device-key mappings, no credentials,
+  low sensitivity.
+- `VEHICLES_CSV_PATH` — contains full VINs in plaintext. VINs identify a
+  specific physical vehicle; `vehicles.py` includes a `mask_vin()` helper
+  used only when *logging* (`"Polling %s (%s)", vehicle.vehicle_id,
+  mask_vin(vehicle.vin)`), not when the file itself is written or read —
+  so the CSV on disk is unmasked. Treat it with the same file permissions
+  care as `.env`.
 
-VINs should be masked in logs. Do not log passwords, S-PINs, session tokens or complete API responses containing sensitive information.
+## Known gaps (as of v0.1.4)
 
-## MQTT
+- No control path exists yet (see README) — so there's currently no
+  attack surface via "a switch toggle triggers a vehicle action," simply
+  because no switch toggle triggers anything. That changes the day
+  someone wires up the `MQTT_DOMOTICZ_OUT_TOPIC` subscriber and adds
+  lock/unlock methods to `SkodaBridge` — at that point, this document
+  needs a real review of who can reach that MQTT topic and inject a
+  lock/unlock command, especially given `SKODA_SPIN` is already being
+  loaded in anticipation of exactly that.
+- No rate limiting or backoff is implemented around the MySkoda poll
+  loop beyond `POLL_INTERVAL_SECONDS` itself — a misconfigured short
+  interval could trigger upstream rate limiting on your Skoda account
+  (not modeled or protected against in this code).
+- Connect to Domoticz through `HTTPS`
 
-Protect the MQTT broker with authentication and network controls appropriate to the environment. Do not expose the MQTT listener directly to the Internet.
+## Reporting a concern
 
-## HTTP vs HTTPS
-
-The current configuration intentionally uses native Domoticz HTTP on the trusted LAN. HTTP should not be used across an untrusted network. If Domoticz HTTPS is deployed, use it instead and ensure certificate validation is appropriate.
-
-## Docker
-
-- Keep the base image and Python dependencies updated.
-- Do not mount the Docker socket into this container.
-- Do not run the container with unnecessary host privileges.
-- Keep the state directory writable only where required.
-- Review `docker-compose.yml` before deployment.
-
-## Dependency security
-
-The project pins `myskoda==2.17.1`. Monitor that dependency because it is an unofficial integration and depends on Škoda's changing backend services.
-
-## Credential compromise checklist
-
-If a credential may have leaked:
-
-1. Change the affected password immediately.
-2. Rotate any applicable S-PIN/API/MQTT credentials.
-3. Replace the local `.env`.
-4. Check Git history for accidental commits.
-5. Review Domoticz and MQTT logs.
-6. Restart the container after credentials are replaced.
+This is a personal repo with a single maintainer/user — there's no
+formal disclosure process. Open an issue or fix it directly.
