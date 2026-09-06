@@ -1,6 +1,6 @@
 services:
   domoticz-myskoda:
-    image: domoticz-myskoda:0.1.3
+    image: domoticz-myskoda:0.1.4
     build: .
     container_name: domoticz-myskoda
     restart: unless-stopped
