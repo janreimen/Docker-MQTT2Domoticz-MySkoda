@@ -4,3 +4,5 @@ __pycache__/
 state/*.json
 config/vehicles.csv
 !state/devices.json
+*.bak*
+app/*.bak*

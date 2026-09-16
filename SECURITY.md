@@ -1,7 +1,7 @@
 # Security
 
 This is a personal home-lab bridge, not a hardened multi-tenant service.
-The notes below describe what the current code (v0.1.4) actually does
+The notes below describe what the current code (v0.1.5) actually does
 with credentials and network traffic, based on reading `config.py`,
 `domoticz_client.py`, and `main.py` directly — not general best-practice
 boilerplate.
@@ -61,7 +61,7 @@ segments, not just within one trusted LAN.
   so the CSV on disk is unmasked. Treat it with the same file permissions
   care as `.env`.
 
-## Known gaps (as of v0.1.4)
+## Known gaps (as of v0.1.5)
 
 - No control path exists yet (see README) — so there's currently no
   attack surface via "a switch toggle triggers a vehicle action," simply

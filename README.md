@@ -4,7 +4,7 @@ Polls one or more MySkoda-connected vehicles and pushes their state into
 auto-provisioned Domoticz virtual devices. Runs as a single long-lived
 Docker container.
 
-**Version: 0.1.4**
+**Version: 0.1.5**
 
 ## How it works
 

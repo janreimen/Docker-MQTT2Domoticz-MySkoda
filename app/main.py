@@ -18,51 +18,30 @@ from skoda_bridge import SkodaBridge
 from vehicles import load_vehicles, mask_vin
 
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
+
+log = logging.getLogger("domoticz_myskoda")
 
 
-log = logging.getLogger(
-    "domoticz_myskoda"
-)
-
-
-def load_device_mapping(
-    path: str,
-) -> dict[str, Any]:
-
+def load_device_mapping(path: str) -> dict[str, Any]:
     file = Path(path)
 
     if not file.exists():
         return {}
 
     try:
-
-        data = json.loads(
-            file.read_text(
-                encoding="utf-8"
-            )
-        )
-
+        data = json.loads(file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-
         log.warning(
-            "Invalid devices.json; "
-            "starting with empty mapping"
+            "Invalid devices.json; starting with empty mapping"
         )
-
         return {}
 
-    if not isinstance(
-        data,
-        dict,
-    ):
-
+    if not isinstance(data, dict):
         log.warning(
-            "devices.json does not contain "
-            "an object; starting with "
-            "empty mapping"
+            "devices.json does not contain an object; "
+            "starting with empty mapping"
         )
-
         return {}
 
     return data
@@ -72,9 +51,7 @@ def save_device_mapping(
     path: str,
     mapping: dict[str, Any],
 ) -> None:
-    """
-    Atomically replace devices.json.
-    """
+    """Atomically replace devices.json."""
 
     file = Path(path)
 
@@ -100,51 +77,35 @@ def save_device_mapping(
     )
 
     try:
-
         with os.fdopen(
             fd,
             "w",
             encoding="utf-8",
         ) as handle:
-
             handle.write(content)
             handle.flush()
-            os.fsync(
-                handle.fileno()
-            )
+            os.fsync(handle.fileno())
 
-        os.replace(
-            temporary_path,
-            file,
-        )
+        os.replace(temporary_path, file)
 
         # Best-effort directory fsync.
-
         try:
-
             directory_fd = os.open(
                 file.parent,
                 os.O_DIRECTORY,
             )
 
             try:
-                os.fsync(
-                    directory_fd
-                )
+                os.fsync(directory_fd)
             finally:
-                os.close(
-                    directory_fd
-                )
+                os.close(directory_fd)
 
         except OSError:
             pass
 
     except Exception:
-
         try:
-            os.unlink(
-                temporary_path
-            )
+            os.unlink(temporary_path)
         except OSError:
             pass
 
@@ -157,7 +118,6 @@ async def update_vehicle(
     snapshot: Any,
     enable_gps: bool,
 ) -> None:
-
     # ================================================================
     # Switches
     # ================================================================
@@ -171,21 +131,22 @@ async def update_vehicle(
     }
 
     for key, value in switches.items():
-
         if value is None:
             continue
 
-        idx = device_mapping.get(
-            key
-        )
+        idx = device_mapping.get(key)
 
         if idx is None:
             continue
 
-        await domoticz.set_switch(
+        log.debug(
+            "Updating Domoticz switch %s IDX %d -> %s",
+            key,
             idx,
             value,
         )
+
+        await domoticz.set_switch(idx, value)
 
     # ================================================================
     # Counters
@@ -194,55 +155,52 @@ async def update_vehicle(
     counters = {
         "range_km": snapshot.range_km,
         "mileage_km": snapshot.mileage_km,
-        "inspection_due_days":
-            snapshot.inspection_due_days,
+        "inspection_due_days": snapshot.inspection_due_days,
     }
 
     for key, value in counters.items():
-
         if value is None:
             continue
 
-        idx = device_mapping.get(
-            key
-        )
+        idx = device_mapping.get(key)
 
         if idx is None:
             continue
 
-        await domoticz.set_custom_counter(
+        log.debug(
+            "Updating Domoticz counter %s IDX %d -> %s",
+            key,
             idx,
             value,
         )
+
+        await domoticz.set_custom_counter(idx, value)
 
     # ================================================================
     # GPS position
     # ================================================================
 
-    if (
-        enable_gps
-        and snapshot.position is not None
-    ):
-
-        idx = device_mapping.get(
-            "position"
-        )
+    if enable_gps and snapshot.position is not None:
+        idx = device_mapping.get("position")
 
         if idx is not None:
+            latitude, longitude = snapshot.position
 
-            latitude, longitude = (
-                snapshot.position
-            )
-
-            await domoticz.set_text(
-                idx,
+            position_text = (
                 f"{latitude:.6f},"
-                f"{longitude:.6f}",
+                f"{longitude:.6f}"
             )
+
+            log.debug(
+                "Updating Domoticz position IDX %d -> %s",
+                idx,
+                position_text,
+            )
+
+            await domoticz.set_text(idx, position_text)
 
 
 async def run() -> None:
-
     config = load_config()
 
     logging.basicConfig(
@@ -259,13 +217,9 @@ async def run() -> None:
         ),
     )
 
-    vehicles = load_vehicles(
-        config.vehicles_csv_path
-    )
+    vehicles = load_vehicles(config.vehicles_csv_path)
 
-    devices = load_device_mapping(
-        config.devices_json_path
-    )
+    devices = load_device_mapping(config.devices_json_path)
 
     log.info(
         "Starting Domoticz-MySkoda v%s",
@@ -277,14 +231,9 @@ async def run() -> None:
         len(vehicles),
     )
 
-    timeout = aiohttp.ClientTimeout(
-        total=30
-    )
+    timeout = aiohttp.ClientTimeout(total=30)
 
-    async with aiohttp.ClientSession(
-        timeout=timeout
-    ) as session:
-
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         # ============================================================
         # MySkoda
         # ============================================================
@@ -299,9 +248,7 @@ async def run() -> None:
             password=config.skoda_password,
         )
 
-        log.info(
-            "MySkoda connection ready"
-        )
+        log.info("MySkoda connection ready")
 
         # ============================================================
         # Domoticz
@@ -319,7 +266,6 @@ async def run() -> None:
         # ============================================================
 
         if config.domoticz_provision:
-
             log.info(
                 "Automatic Domoticz provisioning enabled"
             )
@@ -336,12 +282,9 @@ async def run() -> None:
                 devices,
             )
 
-            log.info(
-                "Domoticz provisioning complete"
-            )
+            log.info("Domoticz provisioning complete")
 
         else:
-
             log.info(
                 "Automatic Domoticz provisioning disabled"
             )
@@ -351,12 +294,11 @@ async def run() -> None:
         # ============================================================
 
         bridges = {
-            vehicle.vehicle_id:
-                SkodaBridge(
-                    myskoda,
-                    vehicle.vin,
-                    vehicle.name,
-                )
+            vehicle.vehicle_id: SkodaBridge(
+                myskoda,
+                vehicle.vin,
+                vehicle.name,
+            )
             for vehicle in vehicles
         }
 
@@ -365,17 +307,12 @@ async def run() -> None:
         # ============================================================
 
         while True:
-
             for vehicle in vehicles:
-
                 try:
-
                     log.info(
                         "Polling %s (%s)",
                         vehicle.vehicle_id,
-                        mask_vin(
-                            vehicle.vin
-                        ),
+                        mask_vin(vehicle.vin),
                     )
 
                     snapshot = await bridges[
@@ -408,7 +345,6 @@ async def run() -> None:
                     )
 
                 except Exception:
-
                     log.exception(
                         "Polling failed for %s",
                         vehicle.vehicle_id,
@@ -420,10 +356,9 @@ async def run() -> None:
 
 
 def main() -> None:
-    asyncio.run(
-        run()
-    )
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
     main()
+

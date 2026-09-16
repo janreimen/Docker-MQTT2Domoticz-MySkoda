@@ -1,4 +1,4 @@
-# Deploying Docker-MQTT2Domoticz-MySkoda (v0.1.4)
+# Deploying Docker-MQTT2Domoticz-MySkoda (v0.1.5)
 
 This assumes the layout already running on `hostname`:
 `/srv/docker/Docker-MQTT2Domoticz-MySkoda/` with an `app/` subfolder
@@ -41,7 +41,7 @@ docker compose logs -f
 ## 4. What a healthy startup looks like
 
 ```
-Starting Domoticz-MySkoda v0.1.4
+Starting Domoticz-MySkoda v0.1.5
 Loaded N vehicle(s)
 ... myskoda.mqtt: Connected to MQTT
 MySkoda connection ready

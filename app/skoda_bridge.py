@@ -86,15 +86,74 @@ class SkodaBridge:
         value: Any,
         *keys: str,
     ) -> Any:
+        """
+        Recursively find the first matching field.
+
+        MySkoda responses can contain nested dictionaries, lists, and
+        Pydantic-style model objects. The API also uses camelCase in
+        some raw responses while the Python models normally expose
+        snake_case fields, so both forms are accepted.
+        """
+
+        if value is None:
+            return None
 
         value = cls.dump(value)
 
-        if isinstance(value, dict):
+        wanted: set[str] = set(keys)
 
-            for key in keys:
+        # Add camelCase equivalents.
+        for key in tuple(wanted):
+            if "_" in key:
+                parts = key.split("_")
 
+                wanted.add(
+                    parts[0]
+                    + "".join(
+                        part.capitalize()
+                        for part in parts[1:]
+                    )
+                )
+
+        # Dictionary.
+        if isinstance(
+            value,
+            dict,
+        ):
+
+            # Prefer fields at the current level.
+            for key in wanted:
                 if key in value:
                     return value[key]
+
+            # Then recursively inspect nested values.
+            for nested in value.values():
+
+                result = cls.find(
+                    nested,
+                    *wanted,
+                )
+
+                if result is not None:
+                    return result
+
+            return None
+
+        # Lists / tuples.
+        if isinstance(
+            value,
+            (list, tuple),
+        ):
+
+            for item in value:
+
+                result = cls.find(
+                    item,
+                    *wanted,
+                )
+
+                if result is not None:
+                    return result
 
         return None
 
@@ -232,6 +291,18 @@ class SkodaBridge:
         self,
         positions: Any = None,
     ) -> tuple[float, float] | None:
+        """
+        Extract the latest vehicle GPS position.
+
+        Handles nested structures such as:
+
+            positions[]
+              -> gpsCoordinates
+                   -> latitude
+                   -> longitude
+
+        as well as simpler position/coordinate structures.
+        """
 
         if positions is None:
 
@@ -243,47 +314,6 @@ class SkodaBridge:
             )
 
         if positions is None:
-            return None
-
-        positions = self.dump(
-            positions
-        )
-
-        if isinstance(
-            positions,
-            dict,
-        ):
-
-            for key in (
-                "positions",
-                "position",
-                "items",
-                "data",
-                "result",
-            ):
-
-                if key in positions:
-                    positions = positions[key]
-                    break
-
-        if isinstance(
-            positions,
-            list,
-        ):
-
-            if not positions:
-                return None
-
-            positions = positions[-1]
-
-        positions = self.dump(
-            positions
-        )
-
-        if not isinstance(
-            positions,
-            dict,
-        ):
             return None
 
         latitude = self.find(
@@ -304,43 +334,16 @@ class SkodaBridge:
             or longitude is None
         ):
 
-            nested = self.find(
-                positions,
-                "position",
-                "coordinates",
+            log.debug(
+                "No GPS coordinates found for %s",
+                self.vehicle_name,
             )
 
-            nested = self.dump(
-                nested
-            )
-
-            if isinstance(
-                nested,
-                dict,
-            ):
-
-                latitude = self.find(
-                    nested,
-                    "latitude",
-                    "lat",
-                )
-
-                longitude = self.find(
-                    nested,
-                    "longitude",
-                    "lon",
-                    "lng",
-                )
-
-        if (
-            latitude is None
-            or longitude is None
-        ):
             return None
 
         try:
 
-            return (
+            result = (
                 float(latitude),
                 float(longitude),
             )
@@ -349,7 +352,25 @@ class SkodaBridge:
             TypeError,
             ValueError,
         ):
+
+            log.warning(
+                "Invalid GPS coordinates for %s: "
+                "latitude=%r longitude=%r",
+                self.vehicle_name,
+                latitude,
+                longitude,
+            )
+
             return None
+
+        log.debug(
+            "GPS position for %s: %.6f,%.6f",
+            self.vehicle_name,
+            result[0],
+            result[1],
+        )
+
+        return result
 
     # ================================================================
     # Snapshot
@@ -557,14 +578,31 @@ class SkodaBridge:
         # Inspection
         # ============================================================
 
-        inspection_due_days = self.as_int(
-            self.find(
-                maintenance_data,
-                "inspection_due_in_days",
-                "inspection_due_days",
-                "inspection_days",
-            )
+        inspection_raw = self.find(
+            maintenance_data,
+            "inspection_due_in_days",
+            "inspection_due_days",
+            "inspection_days",
         )
+
+        inspection_due_days = self.as_int(
+            inspection_raw
+        )
+
+        if inspection_due_days is None:
+
+            log.debug(
+                "No inspection due value found for %s",
+                self.vehicle_name,
+            )
+
+        else:
+
+            log.debug(
+                "Inspection due for %s: %d days",
+                self.vehicle_name,
+                inspection_due_days,
+            )
 
         # ============================================================
         # Position

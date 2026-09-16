@@ -1,6 +1,6 @@
 services:
   domoticz-myskoda:
-    image: domoticz-myskoda:0.1.4
+    image: domoticz-myskoda:0.1.5
     build: .
     container_name: domoticz-myskoda
     restart: unless-stopped
@@ -15,4 +15,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    mem_limit: 128m

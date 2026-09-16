@@ -6,7 +6,6 @@ from typing import Any
 
 import aiohttp
 
-
 log = logging.getLogger("domoticz")
 
 
@@ -15,22 +14,25 @@ class DomoticzError(Exception):
 
 
 class DomoticzClient:
-
     def __init__(
         self,
         session: aiohttp.ClientSession,
         base_url: str,
         username: str = "",
         password: str = "",
-        timeout: int = 15,
+        timeout: int = 30,
     ) -> None:
         self.session = session
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
-        self.timeout = aiohttp.ClientTimeout(
-            total=timeout
-        )
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+
+        # Retries are deliberately only used for value updates.
+        # Creation/configuration requests remain single-shot to avoid
+        # accidentally creating duplicate devices after a timeout.
+        self.update_retries = 3
+        self.update_retry_delay = 1.0
 
     # ================================================================
     # HTTP
@@ -40,8 +42,22 @@ class DomoticzClient:
         self,
         params: dict[str, Any],
     ) -> dict[str, Any]:
+        """Execute one Domoticz API request.
+
+        This method deliberately performs exactly one HTTP request.
+        Higher-level update methods may retry safe value updates.
+        """
 
         url = f"{self.base_url}/json.htm"
+
+        log.debug(
+            "Domoticz API request: %s",
+            {
+                key: value
+                for key, value in params.items()
+                if key != "password"
+            },
+        )
 
         auth = None
 
@@ -58,7 +74,6 @@ class DomoticzClient:
                 auth=auth,
                 timeout=self.timeout,
             ) as response:
-
                 text = await response.text()
 
                 if response.status != 200:
@@ -78,6 +93,11 @@ class DomoticzClient:
         except asyncio.CancelledError:
             raise
 
+        except asyncio.TimeoutError as exc:
+            raise DomoticzError(
+                "Domoticz API request timed out"
+            ) from exc
+
         except aiohttp.ClientError as exc:
             raise DomoticzError(
                 f"Connection error: {exc}"
@@ -85,21 +105,65 @@ class DomoticzClient:
 
         if not isinstance(data, dict):
             raise DomoticzError(
-                "Domoticz returned a "
-                "non-object JSON response"
+                "Domoticz returned a non-object JSON response"
             )
 
         status = data.get("status")
 
-        if status not in (
-            None,
-            "OK",
-        ):
+        if status not in (None, "OK"):
             raise DomoticzError(
                 f"Domoticz API error: {data}"
             )
 
+        log.debug(
+            "Domoticz API response status=%s",
+            data.get("status"),
+        )
+
         return data
+
+    async def _update_request(
+        self,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute a retryable Domoticz value update.
+
+        This is intended for idempotent value updates such as:
+        - switchlight
+        - udevice
+
+        It does not retry device creation or configuration requests.
+        """
+
+        for attempt in range(1, self.update_retries + 1):
+            try:
+                return await self._request(params)
+
+            except DomoticzError as exc:
+                if attempt >= self.update_retries:
+                    raise
+
+                delay = (
+                    self.update_retry_delay
+                    * attempt
+                )
+
+                log.warning(
+                    "Domoticz update failed "
+                    "(attempt %d/%d): %s; "
+                    "retrying in %.1fs",
+                    attempt,
+                    self.update_retries,
+                    exc,
+                    delay,
+                )
+
+                await asyncio.sleep(delay)
+
+        # Unreachable, but keeps type checkers happy.
+        raise DomoticzError(
+            "Domoticz update failed"
+        )
 
     # ================================================================
     # Discovery
@@ -108,7 +172,6 @@ class DomoticzClient:
     async def get_devices(
         self,
     ) -> list[dict[str, Any]]:
-
         data = await self._request(
             {
                 "type": "command",
@@ -118,10 +181,7 @@ class DomoticzClient:
             }
         )
 
-        result = data.get(
-            "result",
-            [],
-        )
+        result = data.get("result", [])
 
         if not isinstance(result, list):
             return []
@@ -135,7 +195,6 @@ class DomoticzClient:
     async def get_hardware(
         self,
     ) -> list[dict[str, Any]]:
-
         data = await self._request(
             {
                 "type": "command",
@@ -143,10 +202,7 @@ class DomoticzClient:
             }
         )
 
-        result = data.get(
-            "result",
-            [],
-        )
+        result = data.get("result", [])
 
         if not isinstance(result, list):
             return []
@@ -161,13 +217,10 @@ class DomoticzClient:
         self,
         name: str,
     ) -> dict[str, Any] | None:
-
         hardware = await self.get_hardware()
 
         for item in hardware:
-            if str(
-                item.get("Name", "")
-            ) == name:
+            if str(item.get("Name", "")) == name:
                 return item
 
         return None
@@ -176,9 +229,7 @@ class DomoticzClient:
         self,
         hardware_idx: int,
     ) -> list[dict[str, Any]]:
-
         devices = await self.get_devices()
-
         result: list[dict[str, Any]] = []
 
         for device in devices:
@@ -186,10 +237,7 @@ class DomoticzClient:
                 device_hardware = int(
                     device.get("HardwareID")
                 )
-            except (
-                TypeError,
-                ValueError,
-            ):
+            except (TypeError, ValueError):
                 continue
 
             if device_hardware == hardware_idx:
@@ -201,7 +249,6 @@ class DomoticzClient:
         self,
         idx: int,
     ) -> dict[str, Any] | None:
-
         devices = await self.get_devices()
 
         for device in devices:
@@ -209,10 +256,7 @@ class DomoticzClient:
                 device_idx = int(
                     device.get("idx")
                 )
-            except (
-                TypeError,
-                ValueError,
-            ):
+            except (TypeError, ValueError):
                 continue
 
             if device_idx == idx:
@@ -228,7 +272,6 @@ class DomoticzClient:
         self,
         name: str,
     ) -> int:
-
         data = await self._request(
             {
                 "type": "command",
@@ -238,20 +281,21 @@ class DomoticzClient:
                 "name": name,
                 "enabled": "true",
                 "datatimeout": "0",
+                "mode1": "0",
+                "mode2": "0",
+                "mode3": "0",
+                "mode4": "0",
+                "mode5": "0",
+                "mode6": "0",
             }
         )
 
         idx = data.get("idx")
 
         if idx is None:
-            result = data.get(
-                "result"
-            )
+            result = data.get("result")
 
-            if (
-                isinstance(result, list)
-                and result
-            ):
+            if isinstance(result, list) and result:
                 first = result[0]
 
                 if isinstance(first, dict):
@@ -259,14 +303,10 @@ class DomoticzClient:
 
         try:
             return int(idx)
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
+        except (TypeError, ValueError) as exc:
             raise DomoticzError(
-                "Domoticz created hardware "
-                "but returned no valid IDX: "
-                f"{data}"
+                "Domoticz created hardware but "
+                f"returned no valid IDX: {data}"
             ) from exc
 
     # ================================================================
@@ -282,14 +322,14 @@ class DomoticzClient:
         options: str = "",
         name: str | None = None,
     ) -> int:
+        """Create a virtual sensor device."""
 
         if sensor_name is None:
             sensor_name = name
 
         if not sensor_name:
             raise DomoticzError(
-                "create_virtual_sensor requires "
-                "sensor_name"
+                "create_virtual_sensor requires sensor_name"
             )
 
         params: dict[str, Any] = {
@@ -304,57 +344,100 @@ class DomoticzClient:
         if options:
             params["options"] = options
 
-        data = await self._request(
-            params
+        data = await self._request(params)
+
+        idx = self._extract_idx(data)
+
+        if idx is not None:
+            return idx
+
+        return await self._find_created_idx(
+            hardware_idx,
+            sensor_name,
         )
 
+    async def create_custom_sensor(
+        self,
+        hardware_idx: int,
+        sensor_name: str,
+        unit_label: str,
+    ) -> int:
+        """Create a genuine Domoticz General / Custom Sensor."""
+
+        if not sensor_name:
+            raise DomoticzError(
+                "create_custom_sensor requires sensor_name"
+            )
+
+        if not unit_label:
+            raise DomoticzError(
+                "create_custom_sensor requires unit_label"
+            )
+
+        params: dict[str, Any] = {
+            "type": "command",
+            "param": "createdevice",
+            "idx": str(hardware_idx),
+            "sensorname": sensor_name,
+            "sensormappedtype": "0xF31F",
+            "sensoroptions": f"1;{unit_label}",
+        }
+
+        data = await self._request(params)
+
+        idx = self._extract_idx(data)
+
+        if idx is not None:
+            return idx
+
+        return await self._find_created_idx(
+            hardware_idx,
+            sensor_name,
+        )
+
+    @staticmethod
+    def _extract_idx(
+        data: dict[str, Any],
+    ) -> int | None:
         idx = data.get("idx")
 
         if idx is None:
-            result = data.get(
-                "result"
-            )
+            result = data.get("result")
 
-            if (
-                isinstance(result, list)
-                and result
-            ):
+            if isinstance(result, list) and result:
                 first = result[0]
 
                 if isinstance(first, dict):
                     idx = first.get("idx")
 
-        if idx is not None:
-            try:
-                return int(idx)
-            except (
-                TypeError,
-                ValueError,
-            ):
-                pass
+        try:
+            return int(idx)
+        except (TypeError, ValueError):
+            return None
+
+    async def _find_created_idx(
+        self,
+        hardware_idx: int,
+        sensor_name: str,
+    ) -> int:
+        """Find a newly created device by exact name."""
 
         devices = await self.get_devices_by_hardware(
             hardware_idx
         )
 
         for device in devices:
-            if str(
-                device.get("Name", "")
-            ) == sensor_name:
-                try:
-                    return int(
-                        device.get("idx")
-                    )
-                except (
-                    TypeError,
-                    ValueError,
-                ):
-                    continue
+            if str(device.get("Name", "")) != sensor_name:
+                continue
+
+            try:
+                return int(device.get("idx"))
+            except (TypeError, ValueError):
+                continue
 
         raise DomoticzError(
-            "Domoticz created sensor but "
-            "its IDX could not be determined: "
-            f"{data}"
+            f"Domoticz created sensor '{sensor_name}' "
+            "but its IDX could not be determined"
         )
 
     # ================================================================
@@ -368,7 +451,6 @@ class DomoticzClient:
         used: int = 1,
         switch_type: int | None = None,
     ) -> None:
-
         params: dict[str, Any] = {
             "type": "command",
             "param": "setused",
@@ -378,20 +460,15 @@ class DomoticzClient:
         }
 
         if switch_type is not None:
-            params["switchtype"] = str(
-                switch_type
-            )
+            params["switchtype"] = str(switch_type)
 
-        await self._request(
-            params
-        )
+        await self._request(params)
 
     async def update_device_name(
         self,
         idx: int,
         name: str,
     ) -> None:
-
         await self.set_device(
             idx=idx,
             name=name,
@@ -404,7 +481,6 @@ class DomoticzClient:
         name: str,
         switch_type: int,
     ) -> None:
-
         await self.set_device(
             idx=idx,
             name=name,
@@ -419,11 +495,13 @@ class DomoticzClient:
         quantity: str,
         units: str,
     ) -> None:
+        """Configure an existing RFXMeter-style counter."""
 
-        if quantity.lower() == "time":
-            switch_type = 5
-        else:
-            switch_type = 3
+        switch_type = (
+            5
+            if quantity.lower() == "time"
+            else 3
+        )
 
         await self.set_device(
             idx=idx,
@@ -432,11 +510,12 @@ class DomoticzClient:
             switch_type=switch_type,
         )
 
-    async def configure_text(
+    async def configure_custom_sensor(
         self,
         idx: int,
         name: str,
     ) -> None:
+        """Rename an existing Custom Sensor device."""
 
         await self.set_device(
             idx=idx,
@@ -444,8 +523,19 @@ class DomoticzClient:
             used=1,
         )
 
+    async def configure_text(
+        self,
+        idx: int,
+        name: str,
+    ) -> None:
+        await self.set_device(
+            idx=idx,
+            name=name,
+            used=1,
+        )
+
     # ================================================================
-    # Device updates
+    # Device value updates
     # ================================================================
 
     async def set_switch(
@@ -453,17 +543,20 @@ class DomoticzClient:
         idx: int,
         value: bool,
     ) -> None:
+        switchcmd = "On" if value else "Off"
 
-        await self._request(
+        log.debug(
+            "Setting Domoticz switch IDX %d -> %s",
+            idx,
+            switchcmd,
+        )
+
+        await self._update_request(
             {
                 "type": "command",
                 "param": "switchlight",
                 "idx": str(idx),
-                "switchcmd": (
-                    "On"
-                    if value
-                    else "Off"
-                ),
+                "switchcmd": switchcmd,
             }
         )
 
@@ -472,14 +565,50 @@ class DomoticzClient:
         idx: int,
         value: int | float,
     ) -> None:
+        """Push a value to an RFXMeter-style counter."""
 
-        await self._request(
+        value_text = str(value)
+
+        log.debug(
+            "Setting Domoticz custom counter "
+            "IDX %d -> %s",
+            idx,
+            value_text,
+        )
+
+        await self._update_request(
             {
                 "type": "command",
                 "param": "udevice",
                 "idx": str(idx),
                 "nvalue": "0",
-                "svalue": str(value),
+                "svalue": value_text,
+            }
+        )
+
+    async def set_custom_sensor(
+        self,
+        idx: int,
+        value: int | float,
+    ) -> None:
+        """Push an absolute value to a Custom Sensor."""
+
+        value_text = str(value)
+
+        log.debug(
+            "Setting Domoticz custom sensor "
+            "IDX %d -> %s",
+            idx,
+            value_text,
+        )
+
+        await self._update_request(
+            {
+                "type": "command",
+                "param": "udevice",
+                "idx": str(idx),
+                "nvalue": "0",
+                "svalue": value_text,
             }
         )
 
@@ -488,8 +617,13 @@ class DomoticzClient:
         idx: int,
         value: str,
     ) -> None:
+        log.debug(
+            "Setting Domoticz text IDX %d -> %s",
+            idx,
+            value,
+        )
 
-        await self._request(
+        await self._update_request(
             {
                 "type": "command",
                 "param": "udevice",
@@ -498,3 +632,4 @@ class DomoticzClient:
                 "svalue": value,
             }
         )
+
